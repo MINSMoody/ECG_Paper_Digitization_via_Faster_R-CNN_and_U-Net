@@ -64,14 +64,15 @@ If you have trouble running your code, then please try the follow steps to run t
 4. Build a Docker image and run the example code in your terminal.
 
         user@computer:~/test_submissions$ ls
-        model mins-eth-submissions test_data  test_outputs  training_data
+         mins-eth-submissions fake_server_setup
 
 
         user@computer:~/test_submissions$ docker build -t image official-phase-mins-eth
 
         # run 'image' (name from above) docker container and mount folders from the parent into the model reposetory
-        # you should be in the parent folder above official-phase-mins-eth
-        user@computer:~/test_submissions$ docker run -it -v ./model:/challenge/model -v ./test_data:/challenge/test_data -v ./test_outputs:/challenge/test_outputs -v ./training_data:/challenge/training_data image bash
+        # you should be in the parent folder fake_server_setup
+
+        user@computer:~/fake_server_setup$ docker run -it -v ./model:/challenge/model -v ./test_data:/challenge/test_data -v ./test_outputs:/challenge/test_outputs -v ./training_data:/challenge/training_data image bash
 
 
 
@@ -92,4 +93,14 @@ If you have trouble running your code, then please try the follow steps to run t
         Exit
 
 # 4b Build a different Dockerfile
- `docker build -t image -f official-phase-mins-eth/Dockerfile.local official-phase-mins-eth`
+```bash
+ docker build -t image -f official-phase-mins-eth/Dockerfile.cpu official-phase-mins-eth
+ docker save -o fake_server_setup/docker_img_cpu.tar image
+```
+
+```bash
+ docker build -t gpu:v1 -f official-phase-mins-eth/Dockerfile.gpu official-phase-mins-eth
+ docker save -o fake_server_setup/docker_img_gpu.tar gpu:v1
+```
+
+then run command with the name instead

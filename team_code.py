@@ -9,11 +9,10 @@
 #
 ################################################################################
 
-import joblib
 import numpy as np
 import os
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from TeamCode.src.implementation import OurDigitizationModel, VoidClassificationModel
+from TeamCode.src.verify_environment import verify_environment
 import sys
 
 from helper_code import *
@@ -48,6 +47,7 @@ def load_models(model_folder, verbose):
 # Run your trained digitization model. This function is *required*. You should edit this function to add your code, but do *not*
 # change the arguments of this function. If you did not train one of the models, then you can return None for the model.
 def run_models(record, digitization_model, classification_model, verbose):
+
     # Run the digitization model; if you did not train this model, then you can set signal = None.
     signal = digitization_model.run_digitization_model(record, verbose)
 
