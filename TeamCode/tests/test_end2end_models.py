@@ -3,7 +3,16 @@
 
 import unittest
 import pytest
-from ..src import sample_implementation, interface, helper_code
+import sys
+import os
+
+# Get the directory one level up
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Add the parent directory to the Python path
+sys.path.insert(0, parent_dir)
+
+from src import sample_implementation, interface, helper_code
 import numpy as np
 
 import os
@@ -45,6 +54,7 @@ class TestTools(unittest.TestCase):
 
         records = helper_code.find_records(self.data_folder)
         num_records = len(records)
+        assert num_records > 0, 'No records found.'
 
         for i in range(num_records):
             if self.verbose:
@@ -106,6 +116,7 @@ class TestTools(unittest.TestCase):
         # Find the records.
         records = helper_code.find_records(label_folder)
         num_records = len(records)
+        assert num_records > 0, 'No records found.'
 
         # Compute the signal reconstruction metrics.
         records_completed_signal_reconstruction = list()
@@ -249,6 +260,14 @@ class TestTools(unittest.TestCase):
             f_measure, _, _ = helper_code.compute_f_measure(label_dxs, output_dxs)
         else:
             f_measure = float('nan')
+            
+        print(f'Mean SNR: {mean_snr}')
+        print(f'Mean SNR Median: {mean_snr_median}')
+        print(f'Mean KS Metric: {mean_ks_metric}')
+        print(f'Mean ASCI Metric: {mean_asci_metric}')
+        print(f'Mean Weighted Absolute Difference Metric: {mean_weighted_absolute_difference_metric}')
+        print(f'F-Measure: {f_measure}')
+        
 
 
     def _test_both_models(self, digitization_class, classification_class):
@@ -256,11 +275,11 @@ class TestTools(unittest.TestCase):
         self._run_evaluation()
 
     def test_sample_implementation(self):
-        self._test_both_models(sample_implementation.ExampleDigitizationModel, sample_implementation.ExampleClassificationModel)
+        self._test_both_models(sample_implementation.MaskRCNNDigitizationModel, sample_implementation.ExampleClassificationModel)
         
     @pytest.mark.skip(reason = "not used any more")
     def test_Kmeans_implementation(self):
-        self._test_both_models(sample_implementation.KMeansDigitizationModel, sample_implementation.ExampleClassificationModel)
+        self._test_both_models(sample_implementation.MaskRCNNDigitizationModel, sample_implementation.ExampleClassificationModel)
 
 # Haoliang added this for testing
 if __name__ == '__main__':
