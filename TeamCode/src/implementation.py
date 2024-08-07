@@ -126,14 +126,16 @@ def readOut(header_path, masks, bboxes, mV_pixel, format):
             start_idx = (num_samples // 4)* (i%4)
             end_idx = start_idx + (num_samples // 4)
             signals_np[i,start_idx:end_idx] = signal
-            np.where(signals_np[i] > 1, signals_np[i], 1)
-            np.where(signals_np[i] < -1, signals_np[i], -1)
+            # np.where(signals_np[i] > 1, signals_np[i], 1)
+            # np.where(signals_np[i] < -1, signals_np[i], -1)
             # min_value = np.min(signals_np)
             # max_value = np.max(signals_np)
 
             # print(f"Min Value: {min_value}")
             # print(f"Max Value: {max_value}")
             # assert min_value >= -32.768 and max_value <= 32767, f"Signal values are out of range: {min_value} - {max_value}"
+    
+    signals_np = np.clip(signals_np, -1, 1)
     return np.transpose(signals_np)
         
 
