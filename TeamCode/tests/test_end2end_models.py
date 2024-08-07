@@ -3,7 +3,7 @@
 
 import unittest
 import pytest
-from ..src import sample_implementation, interface, helper_code
+from ..src import sample_implementation, interface, helper_code, implementation, evaluate_model
 import numpy as np
 
 import os
@@ -84,179 +84,50 @@ class TestTools(unittest.TestCase):
             data_header = helper_code.load_header(data_record)
             helper_code.save_header(output_record, data_header)
 
-            if signal is not None:
-                helper_code.save_signal(output_record, signal)
+            signals = signal # they renamed
+            labels = dx
 
-                comment_lines = [l for l in data_header.split('\n') if l.startswith('#')]
-                signal_header = helper_code.load_header(output_record)
-                signal_header += ''.join(comment_lines) + '\n'
-                helper_code.save_header(output_record, signal_header)
-
-            if dx is not None:
-                helper_code.save_dx(output_record, dx)
+            if signals is not None:
+                comments = [l for l in data_header.split('\n') if l.startswith('#')]
+                helper_code.save_signals(output_record, signals, comments)
+            if labels is not None:
+                helper_code.save_labels(output_record, labels)
 
         print('finished')
         
-
     def _run_evaluation(self):
-        # copy pasted from evaluate_model.py by the challenge organizers on Mar 28
         label_folder = self.data_folder
         output_folder = self.output_folder
         extra_scores = False
-        # Find the records.
-        records = helper_code.find_records(label_folder)
-        num_records = len(records)
+        no_shift = False
 
-        # Compute the signal reconstruction metrics.
-        records_completed_signal_reconstruction = list()
-        snr = dict()
-        snr_median = dict()
-        ks_metric = dict()
-        asci_metric = dict()
-        weighted_absolute_difference_metric = dict()
+        scores = evaluate_model.evaluate_model(folder_ref=label_folder, folder_est=output_folder, no_shift=no_shift, extra_scores=extra_scores)
 
-        # Iterate over the records.
-        for record in records:
-            # Load the signals, if available.
-            label_record = os.path.join(label_folder, record)
-            label_signal, label_fields = helper_code.load_signal(label_record)
+                # Unpack the scores.
+        snr, snr_median, ks_metric, asci_metric, mean_weighted_absolute_difference_metric, f_measure = scores
 
-            if label_signal is not None:
-                label_channels = label_fields['sig_name']
-                label_num_channels = label_fields['n_sig']
-                label_num_samples = label_fields['sig_len']
-                label_sampling_frequency = label_fields['fs']
-                label_units = label_fields['units']
-
-                output_record = os.path.join(output_folder, record)
-                output_signal, output_fields = helper_code.load_signal(output_record)
-
-                if output_signal is not None:
-                    output_channels = output_fields['sig_name']
-                    output_num_channels = output_fields['n_sig']
-                    output_num_samples = output_fields['sig_len']
-                    output_sampling_frequency = output_fields['fs']
-                    output_units = output_fields['units']
-
-                    records_completed_signal_reconstruction.append(record)
-
-                    # Check that the label and output signals match as expected.
-                    assert(label_sampling_frequency == output_sampling_frequency)
-                    assert(label_units == output_units)
-
-                    # Reorder the channels in the output signal to match the channels in the label signal.
-                    output_signal = helper_code.reorder_signal(output_signal, output_channels, label_channels)
-
-                    # Trim or pad the channels in the output signal to match the channels in the label signal.
-                    output_signal = helper_code.trim_signal(output_signal, label_num_samples)
-
-                    # Replace the samples with NaN values in the output signal with zeros.
-                    output_signal[np.isnan(output_signal)] = 0
-
-                else:
-                    output_signal = np.zeros(np.shape(label_signal), dtype=label_signal.dtype)
-
-                # Compute the signal reconstruction metrics.
-                channels = label_channels
-                num_channels = label_num_channels
-                sampling_frequency = label_sampling_frequency
-
-                for j, channel in enumerate(channels):
-                    value = helper_code.compute_snr(label_signal[:, j], output_signal[:, j])
-                    snr[(record, channel)] = value
-
-                    if extra_scores:
-                        value = helper_code.compute_snr_median(label_signal[:, j], output_signal[:, j])
-                        snr_median[(record, channel)] = value
-
-                        value = helper_code.compute_ks_metric(label_signal[:, j], output_signal[:, j])
-                        ks_metric[(record, channel)] = value
-
-                        value = helper_code.compute_asci_metric(label_signal[:, j], output_signal[:, j])
-                        asci_metric[(record, channel)] = value
-
-                        value = helper_code.compute_weighted_absolute_difference(label_signal[:, j], output_signal[:, j], sampling_frequency)
-                        weighted_absolute_difference_metric[(record, channel)] = value
-
-        # Compute the metrics.
-        if len(records_completed_signal_reconstruction) > 0:
-            snr = np.array(list(snr.values()))
-            if not np.all(np.isnan(snr)):
-                mean_snr = np.nanmean(snr)
-            else:
-                mean_snr = float('nan')
-
-            if extra_scores:
-                snr_median = np.array(list(snr_median.values()))
-                if not np.all(np.isnan(snr_median)):
-                    mean_snr_median = np.nanmean(snr_median)
-                else:
-                    mean_snr_median = float('nan')
-
-                ks_metric = np.array(list(ks_metric.values()))
-                if not np.all(np.isnan(ks_metric)):
-                    mean_ks_metric = np.nanmean(ks_metric)
-                else:
-                    mean_ks_metric = float('nan')
-
-                asci_metric = np.array(list(asci_metric.values()))
-                if not np.all(np.isnan(asci_metric)):
-                    mean_asci_metric = np.nanmean(asci_metric)
-                else:
-                    mean_asci_metric = float('nan')
-
-                weighted_absolute_difference_metric = np.array(list(weighted_absolute_difference_metric.values()))
-                if not np.all(np.isnan(weighted_absolute_difference_metric)):
-                    mean_weighted_absolute_difference_metric = np.nanmean(weighted_absolute_difference_metric)
-                else:
-                    mean_weighted_absolute_difference_metric = float('nan')
-            else:
-                mean_snr_median = float('nan')
-                mean_ks_metric = float('nan')
-                mean_asci_metric = float('nan')
-                mean_weighted_absolute_difference_metric = float('nan')
-
+        # Construct a string with scores.
+        if not extra_scores:
+            output_string = \
+                f'SNR: {snr:.3f}\n' + \
+                f'F-measure: {f_measure:.3f}\n'
         else:
-            mean_snr = float('nan')
-            mean_snr_median = float('nan')
-            mean_ks_metric = float('nan')
-            mean_asci_metric = float('nan')
-            mean_weighted_absolute_difference_metric = float('nan')
+            output_string = \
+                f'SNR: {snr:.3f}\n' + \
+                f'SNR median: {snr_median:.3f}\n' \
+                f'KS metric: {ks_metric:.3f}\n' + \
+                f'ASCI metric: {asci_metric:.3f}\n' \
+                f'Weighted absolute difference metric: {mean_weighted_absolute_difference_metric:.3f}\n' \
+                f'F-measure: {f_measure:.3f}\n'
 
-        # Compute the classification metrics.
-        records_completed_classification = list()
-        label_dxs = list()
-        output_dxs = list()
-
-        # Iterate over the records.
-        for record in records:
-            # Load the classes, if available.
-            label_record = os.path.join(label_folder, record)
-            label_dx = helper_code.load_dx(label_record)
-
-            if label_dx:
-                output_record = os.path.join(output_folder, record)
-                output_dx = helper_code.load_dx(output_record)
-
-                if output_dx:
-                    records_completed_classification.append(record)
-
-                label_dxs.append(label_dx)
-                output_dxs.append(output_dx)
-
-        # Compute the metrics.
-        if len(records_completed_classification) > 0:
-            f_measure, _, _ = helper_code.compute_f_measure(label_dxs, output_dxs)
-        else:
-            f_measure = float('nan')
-
+        print(output_string)
 
     def _test_both_models(self, digitization_class, classification_class):
         self._run_models(digitization_class, classification_class)
         self._run_evaluation()
 
     def test_sample_implementation(self):
-        self._test_both_models(sample_implementation.ExampleDigitizationModel, sample_implementation.ExampleClassificationModel)
+        self._test_both_models(implementation.OurDigitizationModel, implementation.VoidClassificationModel)
         
     @pytest.mark.skip(reason = "not used any more")
     def test_Kmeans_implementation(self):
