@@ -75,6 +75,10 @@ def crop_from_bbox( bbox, mask, mV_pixel):
     ## input: bbox, tensor of shape (4,), the bounding box of the lead
     ## input: mask, tensor of shape (H, W), the binary mask of the lead
     ecg_segment = torch.from_numpy(mask[bbox[1]:bbox[3]+1, bbox[0]:bbox[2]+1])
+    
+    # drop the colums that sum up to more than 10:
+    ecg_segment = ecg_segment[:,torch.sum(ecg_segment, axis=0) < 10]
+
 
     weighting_column = torch.linspace(start = (bbox[3] - bbox[1])*mV_pixel/2, end=-1*(bbox[3] - bbox[1])*mV_pixel/2, steps=ecg_segment.shape[0]) #start and end included
     weighting_column = weighting_column.reshape((ecg_segment.shape[0],-1))
@@ -107,7 +111,7 @@ def readOut(header_path, masks, bboxes, mV_pixel, format):
     signals_np = np.empty(shape=(12, num_samples))
 
     for i in range(12):
-        signal = crop_from_bbox( bboxes[i], masks[i], mV_pixel)
+        signal = crop_from_bbox(bboxes[i], masks[i], mV_pixel)
         signal = signal.detach().numpy()
         signal = interpolate_nan(signal)
         signal = signal - np.mean(signal)
@@ -125,14 +129,7 @@ def readOut(header_path, masks, bboxes, mV_pixel, format):
             start_idx = (num_samples // 4)* (i%4)
             end_idx = start_idx + (num_samples // 4)
             signals_np[i,start_idx:end_idx] = signal
-            np.where(signals_np[i] > 1, signals_np[i], 1)
-            np.where(signals_np[i] < -1, signals_np[i], -1)
-            # min_value = np.min(signals_np)
-            # max_value = np.max(signals_np)
-
-            # print(f"Min Value: {min_value}")
-            # print(f"Max Value: {max_value}")
-            # assert min_value >= -32.768 and max_value <= 32767, f"Signal values are out of range: {min_value} - {max_value}"
+    signals_np = np.clip(signals_np, -1, 1)
     return np.transpose(signals_np)
         
 
@@ -157,13 +154,23 @@ class OurDigitizationModel(AbstractDigitizationModel):
         work_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'work_dir')
         self.work_dir = work_dir
         self.config = os.path.join(work_dir, "maskrcnn_config.py")
+        self.model = None
 
     @classmethod
     def from_folder(cls, model_folder, verbose):
-        # load last_checkpoint.pth from work_dir
-        # load config from work_dir
-        # config = os.path.join(model_folder, "maskrcnn_config.py")
-        return cls()
+         # Create an instance of the class
+        instance = cls()
+
+        # Construct checkpoint path based on the model_folder parameter
+        checkpoint_file = os.path.join(instance.work_dir, 'last_checkpoint.pth')
+
+        # Initialize the model using instance-specific variables
+        instance.model = init_detector(instance.config, checkpoint_file, device='cpu')
+
+        if verbose:
+            print(f"Model loaded from {checkpoint_file}")
+
+        return instance
 
     def train_model(self, data_folder, model_folder, verbose):
         pass
@@ -248,11 +255,9 @@ class OurDigitizationModel(AbstractDigitizationModel):
                 
         # assume there is only one image per record
         img = images[0]
-        print(type(img))
+
         img = mmcv.imread(img,channel_order='rgb')
-        checkpoint_file = os.path.join(self.work_dir, 'last_checkpoint.pth')
-        model = init_detector(self.config, checkpoint_file, device='cpu')
-        result = inference_detector(model, img)
+        result = inference_detector(self.model, img)
         result_dict = result.to_dict()
         pred = result_dict['pred_instances']
         bboxes = pred['bboxes'].to(torch.int)
