@@ -13,7 +13,7 @@ import joblib
 import numpy as np
 import os
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from TeamCode.src.sample_implementation import ExampleDigitizationModel, ExampleClassificationModel
+from TeamCode.src.implementation import OurDigitizationModel, VoidClassificationModel
 import sys
 
 from helper_code import *
@@ -29,8 +29,8 @@ from helper_code import *
 
 # Train your digitization model.
 def train_models(data_folder, model_folder, verbose):
-    digitization_model = ExampleDigitizationModel()
-    classification_model = ExampleClassificationModel()
+    digitization_model = OurDigitizationModel()
+    classification_model = VoidClassificationModel()
 
     digitization_model.train_model(data_folder, model_folder, verbose)
     classification_model.train_model(data_folder, model_folder, verbose)
@@ -40,8 +40,8 @@ def train_models(data_folder, model_folder, verbose):
 # arguments of this function. If you do not train one of the models, then you can return None for the model.
 # outputs tuple (digitization model, classification model)
 def load_models(model_folder, verbose):
-    digitization_model = ExampleDigitizationModel.from_folder(model_folder, verbose)
-    classification_model = ExampleClassificationModel.from_folder(model_folder, verbose)
+    digitization_model = OurDigitizationModel.from_folder(model_folder, verbose)
+    classification_model = VoidClassificationModel.from_folder(model_folder, verbose)
 
     return digitization_model, classification_model
 

@@ -58,7 +58,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
             seed = int(np.round(np.mean(img)))
 
-            this_signal = np.random.default_rng(seed=seed).uniform(low=-1, high=1, size=(num_samples, num_signals))
+            this_signal = np.random.default_rng(seed=seed).uniform(low=-0.1, high=0.1, size=(num_samples, num_signals))
             signal_collector[i, :, :] = this_signal
         
         signal = np.mean(signal_collector, axis=0)
