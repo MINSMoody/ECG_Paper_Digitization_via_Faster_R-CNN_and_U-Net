@@ -1,4 +1,5 @@
 
+
 from TeamCode.src.interface import AbstractDigitizationModel, AbstractClassificationModel
 import helper_code as hc
 import numpy as np
@@ -12,6 +13,130 @@ from mmengine.runner import Runner
 from mmdet.utils import setup_cache_size_limit_of_dynamo
 import mmcv
 from mmdet.apis import init_detector, inference_detector
+from helper_code import get_num_samples, get_signal_names, get_image_files
+from scipy import interpolate
+
+## helper functions
+def nan_helper(y):
+    return np.isnan(y), lambda z: z.nonzero()[0]
+
+def interpolate_nan(signal):
+    nans, x= nan_helper(signal)
+    signal[nans]= np.interp(x(nans), x(~nans), signal[~nans])
+    return signal
+
+def upsample(signal, num_samples):
+    x = np.arange(0, len(signal))
+    f = interpolate.interp1d(x, signal)
+    xnew = np.linspace(0, len(signal)-1, num_samples)
+    signal = f(xnew)
+    return signal    
+
+def downsample(signal, num_samples):
+    x = np.arange(0, len(signal))
+    f = interpolate.interp1d(x, signal)
+    xnew = np.linspace(0, len(signal)-1, num_samples)
+    signal = f(xnew)
+    return signal
+
+def bboxes_matching(bboxes, masks):
+    bboxes = bboxes.detach().numpy()
+    masks = masks.detach().numpy()
+    # bboxes = bboxes[:13]
+    # masks = masks[:13]
+    #sort the bboxes by the average of H and W
+    bboxes_avg_H = list((bboxes[:,1]+bboxes[:,3])/2)
+    bboxes_avg_W = list((bboxes[:,0]+bboxes[:,2])/2)
+    bboxes_avg = np.array([bboxes_avg_H, bboxes_avg_W]).transpose()
+    #first sort by H
+    sortrow_idx = bboxes_avg[:, 0].argsort()
+    masks = masks[sortrow_idx]
+    bboxes = bboxes[sortrow_idx]
+    #then sort by W
+    bboxes_avg = bboxes_avg[sortrow_idx[0:12]]
+    row1 = list(bboxes_avg[0:4, 1].argsort())
+    row2 = list(bboxes_avg[4:8, 1].argsort()+4)
+    row3 = list(bboxes_avg[8:12, 1].argsort()+8)
+    idx = row1+row2+row3
+    masks[0:12] = masks[idx]
+    bboxes[0:12] = bboxes[idx]
+    bboxes[4] = bboxes[12]
+    masks[4] = masks[12]
+    return bboxes[0:12], masks[0:12]
+
+## helper functions end 
+
+#format = [['I', 'aVR', 'V1', 'V4'], ['II', 'aVL', 'V2', 'V5'], ['III', 'aVF', 'V3', 'V6'], ['II']] # format is hardcoded for now
+#format = ['I', 'aVR', 'V1', 'V4', 'II', 'aVL', 'V2', 'V5', 'III', 'aVF', 'V3', 'V6']
+#fullmode = 'II'
+
+def crop_from_bbox( bbox, mask, mV_pixel):
+    ## input: leadname, string, the name of the lead
+    ## input: bbox, tensor of shape (4,), the bounding box of the lead
+    ## input: mask, tensor of shape (H, W), the binary mask of the lead
+    ecg_segment = torch.from_numpy(mask[bbox[1]:bbox[3]+1, bbox[0]:bbox[2]+1])
+
+    weighting_column = torch.linspace(start = (bbox[3] - bbox[1])*mV_pixel/2, end=-1*(bbox[3] - bbox[1])*mV_pixel/2, steps=ecg_segment.shape[0]) #start and end included
+    weighting_column = weighting_column.reshape((ecg_segment.shape[0],-1))
+    weighting_matrix = weighting_column.repeat(1,ecg_segment.shape[1])
+
+    weighted_ecg_segment = torch.mul(weighting_matrix, ecg_segment)
+    # signal = torch.zeros(ecg_segment.shape[1])
+    # np.array([0.0]*ecg_segment.shape[1])
+    denominator = torch.sum(ecg_segment,axis = 0)
+    numerator = torch.sum(weighted_ecg_segment,axis=0)
+    signal = torch.div(numerator,denominator)
+    # idx = (denominator != 0)
+    # signal[idx] = torch.div(numerator[idx],denominator[idx])
+
+    return signal
+
+
+def readOut(header_path, masks, bboxes, mV_pixel, format):
+    with open(header_path, 'r') as f:
+        input_header = f.read()
+
+    # get_sampling_frequency(input_header)
+    num_samples = get_num_samples(input_header)
+    # leadnames_all = get_signal_names(input_header)
+    bboxes, masks = bboxes_matching(bboxes, masks)
+
+    # signals_dict = {}
+    ## first do the full modes
+     #[leadname[0] for leadname in format[3:] ]
+    signals_np = np.empty(shape=(12, num_samples))
+
+    for i in range(12):
+        signal = crop_from_bbox( bboxes[i], masks[i], mV_pixel)
+        signal = signal.detach().numpy()
+        signal = interpolate_nan(signal)
+        signal = signal - np.mean(signal)
+        if i == 4:
+            signallen = num_samples
+        else:
+            signallen = num_samples // 4
+        if len(signal) < signallen:
+            signal = upsample(signal, signallen)
+        elif len(signal) > signallen:
+            signal = downsample(signal, signallen)
+        if i == 4:
+            signals_np[i] = signal
+        else:
+            start_idx = (num_samples // 4)* (i%4)
+            end_idx = start_idx + (num_samples // 4)
+            signals_np[i,start_idx:end_idx] = signal
+            np.where(signals_np[i] > 1, signals_np[i], 1)
+            np.where(signals_np[i] < -1, signals_np[i], -1)
+            # min_value = np.min(signals_np)
+            # max_value = np.max(signals_np)
+
+            # print(f"Min Value: {min_value}")
+            # print(f"Max Value: {max_value}")
+            # assert min_value >= -32.768 and max_value <= 32767, f"Signal values are out of range: {min_value} - {max_value}"
+    return np.transpose(signals_np)
+        
+
+
 
 class VoidClassificationModel(AbstractClassificationModel):
     def __init__(self):
@@ -28,7 +153,8 @@ class VoidClassificationModel(AbstractClassificationModel):
         return None
     
 class OurDigitizationModel(AbstractDigitizationModel):
-    def __init__(self, work_dir):
+    def __init__(self):
+        work_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'work_dir')
         self.work_dir = work_dir
         self.config = os.path.join(work_dir, "maskrcnn_config.py")
 
@@ -36,8 +162,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
     def from_folder(cls, model_folder, verbose):
         # load last_checkpoint.pth from work_dir
         # load config from work_dir
-        config = os.path.join(model_folder, "maskrcnn_config.py")
-        return cls(config)
+        # config = os.path.join(model_folder, "maskrcnn_config.py")
+        return cls()
 
     def train_model(self, data_folder, model_folder, verbose):
         pass
@@ -109,7 +235,21 @@ class OurDigitizationModel(AbstractDigitizationModel):
         
         # config=f'/config/mask-rcnn_r50-caffe_fpn_ms-poly-3x_ecg.py'
         # img_dir = '/scratch/hshang/DLECG_Data/data/00000/val/00900_lr-0.png'
-        img = mmcv.imread(record,channel_order='rgb')
+
+        # load image paths
+        path = os.path.split(record)[0]
+        image_files = get_image_files(record)
+
+        images = list()
+        for image_file in image_files:
+            image_file_path = os.path.join(path, image_file)
+            if os.path.isfile(image_file_path):
+                images.append(image_file_path)
+                
+        # assume there is only one image per record
+        img = images[0]
+        print(type(img))
+        img = mmcv.imread(img,channel_order='rgb')
         checkpoint_file = os.path.join(self.work_dir, 'last_checkpoint.pth')
         model = init_detector(self.config, checkpoint_file, device='cpu')
         result = inference_detector(model, img)
@@ -118,49 +258,10 @@ class OurDigitizationModel(AbstractDigitizationModel):
         bboxes = pred['bboxes'].to(torch.int)
         masks = pred['masks']
         
-        mV_pixel = 0.5 #read from printout
-        signals_dict = {}
-
-        for i in range(len(bboxes)):
-            #bbox = bboxes[i].item()
-
-            ecg_segment = masks[i][bboxes[i][1].item():bboxes[i][3].item()+1, bboxes[i][0].item():bboxes[i][2].item()+1]
-
-            weighting_column = torch.linspace(start = (bboxes[i][3] - bboxes[i][1])*mV_pixel/2, end=-1*(bboxes[i][3] - bboxes[i][1])*mV_pixel/2, steps=ecg_segment.shape[0]) #start and end included
-            weighting_column = weighting_column.reshape((ecg_segment.shape[0],-1))
-            weighting_matrix = weighting_column.repeat(1,ecg_segment.shape[1])
-
-            weighted_ecg_segment = torch.mul(weighting_matrix, ecg_segment)
-            signal = torch.zeros(ecg_segment.shape[1])
-            # np.array([0.0]*ecg_segment.shape[1])
-            denominator = torch.sum(ecg_segment,axis = 0)
-            numerator = torch.sum(weighted_ecg_segment,axis=0)
-            mask = (denominator != 0)
-            signal[mask] = torch.div(numerator[mask],denominator[mask])
-            signals_dict[i] = {'signal':signal, 'left_pxl': round(bboxes[i][0].item()),'right_pxl':round(bboxes[i][2].item())}
-
-
-        ## from here work with numpy array
-        fullmode = True
-        bboxes = bboxes.detach().numpy()
-
-        fullmode_idx = np.argmax(bboxes[:,2] - bboxes[:,0])
-        leftmost, rightmost = bboxes[fullmode_idx, [0,2]]
-        bboxes = bboxes-leftmost
-        rightmost = rightmost-leftmost
-
-        signals_mat = np.empty((len(bboxes), rightmost+1))
-        signals_mat[:] = np.nan
-        for i in range(len(bboxes)):
-            if bboxes[i][0]<0:
-                start_idx = 0
-                end_idx = bboxes[i,2]+abs(bboxes[i][0])
-            else:
-                start_idx = bboxes[i,0]
-                end_idx = bboxes[i,2]
-            signals_mat[i,start_idx:end_idx+1] = signals_dict[i]['signal'].detach().numpy()[:]
-
-        return signals_mat
+        mV_pixel = (25.4 *8.5*0.5)/(masks[0].shape[0]*5) #hardcoded for now
+        header_path = hc.get_header_file(record)
+        signal=readOut(header_path, masks, bboxes, mV_pixel, format)
+        return signal
     
 # class OurDigitizationModel(AbstractDigitizationModel):
 #     def __init__(self):
