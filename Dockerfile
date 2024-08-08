@@ -19,5 +19,6 @@ WORKDIR /challenge
 
 ## Include the following line if you have a requirements.txt file.
 RUN pip install -r requirements.txt && pip install -r TeamCode/requirements.txt
+RUN sh ./download_checkpoints.sh
 
 ENV EXPECTEDDEVICE=gpu
