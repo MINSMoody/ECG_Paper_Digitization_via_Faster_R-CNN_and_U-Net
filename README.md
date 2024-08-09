@@ -103,4 +103,11 @@ If you have trouble running your code, then please try the follow steps to run t
  docker save -o fake_server_setup/docker_img_gpu.tar gpu:v1
 ```
 
+`docker load -i docker_img_gpu.tar`
+
 then run command with the name instead
+
+# try on a server with gpu 
+add flag 
+`--gpus all`
+to docker run command. maybe some other too, check the google forum
