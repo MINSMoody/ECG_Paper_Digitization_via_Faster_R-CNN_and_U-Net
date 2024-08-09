@@ -108,9 +108,9 @@ model = dict(
             conv_out_channels=256,
             in_channels=256,
             loss_mask=dict(
-                loss_weight=2.0, type='CrossEntropyLoss', use_mask=True),
+                loss_weight=10.0, type='CrossEntropyLoss', use_mask=True),
             num_classes=1,
-            num_convs=4,
+            num_convs=8,
             type='FCNMaskHead'),
         mask_roi_extractor=dict(
             featmap_strides=[
