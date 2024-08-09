@@ -111,3 +111,14 @@ then run command with the name instead
 add flag 
 `--gpus all`
 to docker run command. maybe some other too, check the google forum
+
+
+# Testing for submission on Narigpu01.
+On the server you can also set the environment variable to expect a GPU, e.g. by adding to the .bashrc on the server (or by manually executing)
+
+```bash 
+export EXPECTEDDEVICE="gpu"
+```
+
+your code can then use this to assign the device in the same way as on the server.
+Then you can again run the tests as described above, and this should behave the same way as on the server. 

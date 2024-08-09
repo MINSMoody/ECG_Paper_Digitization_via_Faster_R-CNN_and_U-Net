@@ -13,7 +13,7 @@ def verify_environment():
     # torch.cuda.is_available() 
     device = os.environ.get("EXPECTEDDEVICE", "unspecified")
     if device == 'unspecified':
-        print("Not running in a docker container")
+        print("EXPECTEDDEVICE environmental variable is not set")
     elif device == 'cpu':
         print("Running with cpu")
     elif device == 'gpu':
