@@ -1,3 +1,5 @@
 .DS_Store
 .vscode/
 __pycache__/
+output/
+TeamCode/tests/resources/example_output/*
