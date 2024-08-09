@@ -7,6 +7,7 @@ import numpy as np
 import os
 
 import torch
+import warnings
 
 from mmengine.config import Config, DictAction
 from mmengine.registry import RUNNERS
@@ -39,102 +40,59 @@ def interpolate_nan(signal):
         signal[0] = 0
     if np.isnan(signal[-1]):
         signal[-1] = 0
-    nans, x= nan_helper(signal)
-    signal[nans]= np.interp(x(nans), x(~nans), signal[~nans])
+    nans, x = nan_helper(signal)
+    signal[nans] = np.interp(x(nans), x(~nans), signal[~nans])
     return signal
 
 def upsample(signal, num_samples):
-    x = np.arange(0, len(signal))
-    f = interpolate.interp1d(x, signal)
-    xnew = np.linspace(0, len(signal)-1, num_samples)
-    signal = f(xnew)
-    return signal    
+    x = np.linspace(0, len(signal)-1, num_samples)
+    return interpolate.interp1d(np.arange(len(signal)), signal, kind='linear')(x)
 
 def downsample(signal, num_samples):
-    x = np.arange(0, len(signal))
-    f = interpolate.interp1d(x, signal)
-    xnew = np.linspace(0, len(signal)-1, num_samples)
-    signal = f(xnew)
-    return signal
-
+    return upsample(signal, num_samples)
 
 def filter_boxes(pred_bboxes, pred_labels, pred_scores, pred_masks):
-    """
-    Filter out the boxes with low confidence score and remove the boxes with high IoU
-    Args:
-        pred_bboxes (np): list of bounding boxes
-        pred_labels (np): list of labels
-        pred_scores (np): list of confidence scores
-        pred_masks (np): list of masks
-    Returns:
-        np: filtered bounding boxes
-        np: filtered labels
-        np: filtered confidence scores
-        np: filtered masks
-    """
     def bbox_iou(box1, box2):
-        """
-        Calculate the Intersection of Unions (IoUs) between bounding boxes.
-        Args:
-            box1 (list): bounding box formatted as [x1, y1, x2, y2]
-            box2 (list): bounding box formatted as [x1, y1, x2, y2]
-        Returns:
-            float: IoU value
-        """
-        # Get the coordinates of bounding boxes
-        b1_x1, b1_y1, b1_x2, b1_y2 = box1
-        b2_x1, b2_y1, b2_x2, b2_y2 = box2
+        inter_rect_x1 = max(box1[0], box2[0])
+        inter_rect_y1 = max(box1[1], box2[1])
+        inter_rect_x2 = min(box1[2], box2[2])
+        inter_rect_y2 = min(box1[3], box2[3])
 
-        # get the corrdinates of the intersection rectangle
-        inter_rect_x1 = max(b1_x1, b2_x1)
-        inter_rect_y1 = max(b1_y1, b2_y1)
-        inter_rect_x2 = min(b1_x2, b2_x2)
-        inter_rect_y2 = min(b1_y2, b2_y2)
+        inter_area = max(0, inter_rect_x2 - inter_rect_x1 + 1) * max(0, inter_rect_y2 - inter_rect_y1 + 1)
 
-        # Intersection area
-        inter_area = max(inter_rect_x2 - inter_rect_x1 + 1, 0) * max(inter_rect_y2 - inter_rect_y1 + 1, 0)
+        b1_area = (box1[2] - box1[0] + 1) * (box1[3] - box1[1] + 1)
+        b2_area = (box2[2] - box2[0] + 1) * (box2[3] - box2[1] + 1)
 
-        # Union Area
-        b1_area = (b1_x2 - b1_x1 + 1) * (b1_y2 - b1_y1 + 1)
-        b2_area = (b2_x2 - b2_x1 + 1) * (b2_y2 - b2_y1 + 1)
-
-        iou = inter_area / (b1_area + b2_area - inter_area)
-
-        return iou
-    # # loop over bounding boxes, if find some boxes have iou > 0.5, filter out the one with lower score
-
-
+        return inter_area / (b1_area + b2_area - inter_area)
+    
+    keep = np.ones(len(pred_bboxes), dtype=bool)
     for i in range(len(pred_bboxes)):
-        for j in range(i+1, len(pred_bboxes)):
-            iou = bbox_iou(pred_bboxes[i], pred_bboxes[j])
-            if iou > 0.3:
-                if pred_scores[i] > pred_scores[j]:
-                    pred_scores[j] = 0
-                else:
-                    pred_scores[i] = 0
-    pred_bboxes = pred_bboxes[pred_scores > 0]
-    pred_labels = pred_labels[pred_scores > 0]
-    pred_masks = pred_masks[pred_scores > 0]
-    pred_scores = pred_scores[pred_scores > 0]
+        for j in range(i + 1, len(pred_bboxes)):
+            if keep[j] and bbox_iou(pred_bboxes[i], pred_bboxes[j]) > 0.3:
+                keep[j] = pred_scores[i] > pred_scores[j]
+
+    pred_bboxes = pred_bboxes[keep]
+    pred_labels = pred_labels[keep]
+    pred_masks = pred_masks[keep]
+    pred_scores = pred_scores[keep]
     
     if len(pred_scores) > 13:
-        # sort the scores and get the top 13
         indices = np.argsort(pred_scores)[::-1][:13]
         pred_bboxes = pred_bboxes[indices]
         pred_labels = pred_labels[indices]
         pred_masks = pred_masks[indices]
         pred_scores = pred_scores[indices]
     
+    if len(pred_bboxes) != 13:
+        warnings.warn(f"Expected 13 boxes, got {len(pred_bboxes)}", UserWarning)
+    
     return pred_bboxes, pred_labels, pred_scores, pred_masks
 
 
+def bboxes_sorting(bboxes, masks):
+    if len(bboxes) != 13:
+        warnings.warn(f"Expected 13 boxes, got {len(bboxes)}", UserWarning)
 
-def bboxes_matching(bboxes, masks):
-    # bboxes = bboxes.detach().numpy()
-    # masks = masks.detach().numpy()
-    # bboxes = bboxes[:13]
-    # masks = masks[:13]
-    #sort the bboxes by the average of H and W
     bboxes_avg_H = list((bboxes[:,1]+bboxes[:,3])/2)
     bboxes_avg_W = list((bboxes[:,0]+bboxes[:,2])/2)
     bboxes_avg = np.array([bboxes_avg_H, bboxes_avg_W]).transpose()
@@ -169,107 +127,58 @@ def bboxes_matching(bboxes, masks):
 #format = ['I', 'aVR', 'V1', 'V4', 'II', 'aVL', 'V2', 'V5', 'III', 'aVF', 'V3', 'V6']
 #fullmode = 'II'
 
-def crop_from_bbox( bbox, mask, mV_pixel):
-    ## input: leadname, string, the name of the lead
-    ## input: bbox, tensor of shape (4,), the bounding box of the lead
-    ## input: mask, tensor of shape (H, W), the binary mask of the lead
+def crop_from_bbox(bbox, mask, mV_pixel):
     bbox = bbox.astype(int)
     ecg_segment = mask[bbox[1]:bbox[3]+1, bbox[0]:bbox[2]+1]
 
-    weighting_column = np.linspace(start = (bbox[3] - bbox[1])*mV_pixel/2, stop=-1*(bbox[3] - bbox[1])*mV_pixel/2, num=ecg_segment.shape[0]) #start and end included
-    weighting_column = weighting_column.reshape((ecg_segment.shape[0],-1))
-    weighting_matrix = np.tile(weighting_column, (1,ecg_segment.shape[1]))
-    # weighting_matrix = weighting_column.repeat(1,ecg_segment.shape[1])
+    weighting_matrix = np.linspace((bbox[3] - bbox[1])*mV_pixel/2, -1*(bbox[3] - bbox[1])*mV_pixel/2, num=ecg_segment.shape[0]).reshape(-1, 1)
+    weighted_ecg_segment = ecg_segment * weighting_matrix
 
-    weighted_ecg_segment = np.multiply(weighting_matrix, ecg_segment)
-    # signal = torch.zeros(ecg_segment.shape[1])
-    # np.array([0.0]*ecg_segment.shape[1])
-    
-    denominator = np.sum(ecg_segment,axis = 0)
-    idx = np.where(denominator >= 1)
-    numerator = np.sum(weighted_ecg_segment,axis=0)
-    signal = np.empty(denominator.shape)
-    signal[:] = np.nan
-    signal[idx] = np.divide(numerator[idx],denominator[idx])
+    denominator = np.sum(ecg_segment, axis=0)
+    numerator = np.sum(weighted_ecg_segment, axis=0)
 
-    # idx = (denominator != 0)
-    # signal[idx] = torch.div(numerator[idx],denominator[idx])
+    signal = np.full(denominator.shape, np.nan)
+    valid_idx = denominator >= 1
+    signal[valid_idx] = numerator[valid_idx] / denominator[valid_idx]
 
     return signal
 
-
-
-
 def readOut(header_path, masks, bboxes, mV_pixel, format):
+    
+
     with open(header_path, 'r') as f:
         input_header = f.read()
 
-    # get_sampling_frequency(input_header)
     num_samples = get_num_samples(input_header)
-    # leadnames_all = get_signal_names(input_header)
-    bboxes, masks = bboxes_matching(bboxes, masks)
 
-    # signals_dict = {}
-    ## first do the full modes
-     #[leadname[0] for leadname in format[3:] ]
-    signals_np = np.empty(shape=(12, num_samples))
+    bboxes, masks = bboxes_sorting(bboxes, masks)
+
+    signals_np = np.full((12, num_samples), np.nan)
 
     for i in range(12):
+        signal = crop_from_bbox(bboxes[12] if i == 1 else bboxes[i], masks[12] if i == 1 else masks[i], mV_pixel)
+        signal = interpolate_nan(signal) - np.mean(signal)
+
+        signallen = num_samples if i == 1 else num_samples // 4
+        signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
+
         if i == 1:
-            signal = crop_from_bbox( bboxes[12], masks[12], mV_pixel)
-            # signal = signal.detach().numpy()
-            signal = interpolate_nan(signal)
-            signal = signal - np.mean(signal)
-            signallen = num_samples
-            if len(signal) < signallen:
-                signal = upsample(signal, signallen)
-            elif len(signal) > signallen:
-                signal = downsample(signal, signallen)
             signals_np[i] = signal
         else:
-            signal = crop_from_bbox( bboxes[i], masks[i], mV_pixel)
-            # signal = signal.detach().numpy()
-            signal = interpolate_nan(signal)
-            signal = signal - np.mean(signal)
-            signallen = num_samples // 4
-            if len(signal) < signallen:
-                signal = upsample(signal, signallen)
-            elif len(signal) > signallen:
-                signal = downsample(signal, signallen)
-            start_idx = (num_samples // 4)* (i//3)
+            start_idx = (num_samples // 4) * (i // 3)
             end_idx = start_idx + (num_samples // 4)
-            signals_np[i,start_idx:end_idx] = signal
-    
-    np.clip(signals_np, -3, 3, out=signals_np)
-    # nans = np.where(np.isnan(signals_np))
-    # print the signal min max without nans
-    signals_np = np.nan_to_num(signals_np)
-    
+            signals_np[i, start_idx:end_idx] = signal
+
     print(header_path)
-    print(f'min max: {np.min(signals_np)}, {np.max(signals_np)}')
-    if signals_np.shape[1] > signals_np.shape[0]:
-        return signals_np.transpose()
-    else: 
-        return signals_np
+    print(f'min max: {np.nanmin(signals_np)}, {np.nanmax(signals_np)}')
+    print(f'nan count: {np.isnan(signals_np).sum()}')
+
+    return signals_np.T if signals_np.shape[1] > signals_np.shape[0] else signals_np
 
 
 
 
 
-
-class VoidClassificationModel(AbstractClassificationModel):
-    def __init__(self):
-        pass
-
-    @classmethod
-    def from_folder(cls, model_folder, verbose):
-        return cls()
-
-    def train_model(self, data_folder, model_folder, verbose):
-        pass
-
-    def run_classification_model(self, record, signal, verbose):
-        return None
     
 class OurDigitizationModel(AbstractDigitizationModel):
     def __init__(self):
@@ -385,57 +294,30 @@ class OurDigitizationModel(AbstractDigitizationModel):
         result = inference_detector(self.model, img)
         result_dict = result.to_dict()
         pred = result_dict['pred_instances']
-        bboxes = pred['bboxes'].to(torch.int)
-        masks = pred['masks']
+        bboxes = pred['bboxes'].to(torch.int).cpu().detach().numpy()
+        masks = pred['masks'].cpu().detach().numpy()
+        scores = pred['scores'].cpu().detach().numpy()
+        labels = pred['labels'].cpu().detach().numpy()
+
+        bboxes, labels, scores, masks = filter_boxes(bboxes, labels, scores, masks)
         
         mV_pixel = (25.4 *8.5*0.5)/(masks[0].shape[0]*5) #hardcoded for now
         header_path = hc.get_header_file(record)
         signal=readOut(header_path, masks, bboxes, mV_pixel, format)
         return signal
     
-# class OurDigitizationModel(AbstractDigitizationModel):
-#     def __init__(self):
-#         pass
-
-#     def train_model(self, data_folder, model_folder, verbose):
-#         print("We did not implement training the digitization model from (Image, Signal) pairs. Since we need extra context information generated by ecg-toolkit for training.")
-#         pass
-
-#     @classmethod
-#     def from_folder(cls, model_folder, verbose):
-#         # load whatever is in the model folder of this git repo
-#         # TODO
-#         return cls()
-    
-#     def run_digitization_model(self, record, verbose):
-#         header_file = hc.get_header_file(record)
-#         header = hc.load_text(header_file)
-
-#         num_samples = hc.get_num_samples(header)
-#         num_signals = hc.get_num_signals(header)
-
-#         images = hc.load_images(record)
-#         # I think there can be more than one image per record
-
-#         if verbose:
-#             print(f'Running the digitization model on {record}, it has {len(images)} images.')
-
-#         signal_collector = np.zeros((len(images), num_samples, num_signals))
-#         for i, img in enumerate(images):
-#             # img is a PIL object at this point
-
-#             np_img = np.asarray(img)
 
 
+class VoidClassificationModel(AbstractClassificationModel):
+    def __init__(self):
+        pass
 
-#             if verbose:
-#                 print(f'Image shape: {np_img.shape}')
+    @classmethod
+    def from_folder(cls, model_folder, verbose):
+        return cls()
 
-#             seed = int(np.round(np.mean(img)))
+    def train_model(self, data_folder, model_folder, verbose):
+        pass
 
-#             this_signal = np.random.default_rng(seed=seed).uniform(low=-0.1, high=0.1, size=(num_samples, num_signals))
-#             signal_collector[i, :, :] = this_signal
-        
-#         signal = np.mean(signal_collector, axis=0)
-#         return signal
-        
+    def run_classification_model(self, record, signal, verbose):
+        return None
