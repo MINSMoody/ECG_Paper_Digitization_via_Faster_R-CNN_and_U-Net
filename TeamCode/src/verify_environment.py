@@ -17,6 +17,7 @@ def verify_environment():
     elif device == 'cpu':
         print("Running with cpu")
     elif device == 'gpu':
+        print("Running with gpu")
         cuda_avail = torch.cuda.is_available() 
         if not cuda_avail:
             raise RuntimeError("Expected CUDA to be avialable but torch.cuda.is_available() returned False") 
