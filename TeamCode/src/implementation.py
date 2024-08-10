@@ -41,6 +41,8 @@ def interpolate_nan(signal):
     if np.isnan(signal[-1]):
         signal[-1] = 0
     nans, x = nan_helper(signal)
+    if len(nans) == 0:
+        return signal
     signal[nans] = np.interp(x(nans), x(~nans), signal[~nans])
     return signal
 
