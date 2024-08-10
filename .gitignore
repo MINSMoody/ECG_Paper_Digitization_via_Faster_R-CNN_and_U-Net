@@ -3,3 +3,4 @@
 __pycache__/
 output/
 TeamCode/tests/resources/example_output/*
+TeamCode/src/old_model/*

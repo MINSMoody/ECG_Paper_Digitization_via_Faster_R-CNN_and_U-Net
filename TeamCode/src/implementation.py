@@ -147,7 +147,9 @@ def crop_from_bbox(bbox, mask, mV_pixel):
 
 def readOut(header_path, masks, bboxes, mV_pixel, format):
     
-
+    if len(bboxes.shape[0]) < 13:
+        return np.zeros((num_samples, 12))
+    
     with open(header_path, 'r') as f:
         input_header = f.read()
 
@@ -187,7 +189,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         verify_environment()
         work_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'work_dir')
         self.work_dir = work_dir
-        self.config = os.path.join(work_dir, "maskrcnn_config.py")
+        self.config = os.path.join(work_dir, "dcnv2.py")
         self.model = None
 
 
@@ -197,7 +199,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         instance = cls()
 
         # Construct checkpoint path based on the model_folder parameter
-        checkpoint_file = os.path.join(instance.work_dir, 'last_checkpoint.pth')
+        checkpoint_file = os.path.join(instance.work_dir, 'epoch_12.pth')
 
         # Initialize the model using instance-specific variables
         instance.model = init_detector(instance.config, checkpoint_file, device=dev)
