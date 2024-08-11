@@ -157,8 +157,8 @@ def readOut(header_path, masks, bboxes, mV_pixel, format):
 
     bboxes, masks = bboxes_sorting(bboxes, masks)
 
-    # signals_np = np.full((12, num_samples), np.nan)
-    signals_np = np.zeros((12, num_samples))
+    signals_np = np.full((12, num_samples), np.nan)
+    # signals_np = np.zeros((12, num_samples))
 
     for i in range(12):
         signal = crop_from_bbox(bboxes[12] if i == 1 else bboxes[i], masks[12] if i == 1 else masks[i], mV_pixel)
