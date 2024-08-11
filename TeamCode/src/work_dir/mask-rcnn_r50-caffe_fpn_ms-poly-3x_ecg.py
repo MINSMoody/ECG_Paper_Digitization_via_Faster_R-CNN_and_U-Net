@@ -15,7 +15,7 @@ env_cfg = dict(
     dist_cfg=dict(backend='nccl'),
     mp_cfg=dict(mp_start_method='fork', opencv_num_threads=0))
 launcher = 'none'
-load_from = '/scratch/hshang/moody/mmdetection_MINS/demo/checkpoints/mask_rcnn_r50_fpn_mdconv_c3-c5_1x_coco_20200203-ad97591f.pth'
+load_from = '/scratch/hshang/moody/mmdetection_MINS/checkpoints/mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth'
 log_level = 'INFO'
 log_processor = dict(by_epoch=True, type='LogProcessor', window_size=50)
 metainfo = dict(
@@ -28,11 +28,12 @@ metainfo = dict(
     ])
 model = dict(
     backbone=dict(
-        dcn=dict(deform_groups=1, fallback_on_stride=False, type='DCNv2'),
         depth=50,
         frozen_stages=1,
-        init_cfg=dict(checkpoint='torchvision://resnet50', type='Pretrained'),
-        norm_cfg=dict(requires_grad=True, type='BN'),
+        init_cfg=dict(
+            checkpoint='open-mmlab://detectron2/resnet50_caffe',
+            type='Pretrained'),
+        norm_cfg=dict(requires_grad=False, type='BN'),
         norm_eval=True,
         num_stages=4,
         out_indices=(
@@ -41,27 +42,21 @@ model = dict(
             2,
             3,
         ),
-        stage_with_dcn=(
-            False,
-            True,
-            True,
-            True,
-        ),
-        style='pytorch',
+        style='caffe',
         type='ResNet'),
     data_preprocessor=dict(
-        bgr_to_rgb=True,
+        bgr_to_rgb=False,
         mean=[
-            123.675,
-            116.28,
             103.53,
+            116.28,
+            123.675,
         ],
         pad_mask=True,
         pad_size_divisor=32,
         std=[
-            58.395,
-            57.12,
-            57.375,
+            1.0,
+            1.0,
+            1.0,
         ],
         type='DetDataPreprocessor'),
     neck=dict(
@@ -92,11 +87,11 @@ model = dict(
                 type='DeltaXYWHBBoxCoder'),
             fc_out_channels=1024,
             in_channels=256,
-            loss_bbox=dict(loss_weight=1.0, type='L1Loss'),
+            loss_bbox=dict(loss_weight=2.0, type='L1Loss'),
             loss_cls=dict(
-                loss_weight=1.0, type='CrossEntropyLoss', use_sigmoid=True),
+                loss_weight=0.5, type='CrossEntropyLoss', use_sigmoid=False),
             num_classes=1,
-            reg_class_agnostic=True,
+            reg_class_agnostic=False,
             roi_feat_size=7,
             type='Shared2FCBBoxHead'),
         bbox_roi_extractor=dict(
@@ -113,9 +108,9 @@ model = dict(
             conv_out_channels=256,
             in_channels=256,
             loss_mask=dict(
-                loss_weight=1.0, type='CrossEntropyLoss', use_mask=True),
+                loss_weight=10.0, type='CrossEntropyLoss', use_mask=True),
             num_classes=1,
-            num_convs=4,
+            num_convs=8,
             type='FCNMaskHead'),
         mask_roi_extractor=dict(
             featmap_strides=[
@@ -125,7 +120,7 @@ model = dict(
                 32,
             ],
             out_channels=256,
-            roi_layer=dict(output_size=28, sampling_ratio=2, type='RoIAlign'),
+            roi_layer=dict(output_size=28, sampling_ratio=0, type='RoIAlign', aligned=True),
             type='SingleRoIExtractor'),
         type='StandardRoIHead'),
     rpn_head=dict(
@@ -259,7 +254,11 @@ test_dataloader = dict(
                 1333,
                 800,
             ), type='Resize'),
-            dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
+            dict(
+                poly2mask=True,
+                type='LoadAnnotations',
+                with_bbox=True,
+                with_mask=True),
             dict(
                 meta_keys=(
                     'img_id',
@@ -291,7 +290,9 @@ test_pipeline = [
         1333,
         800,
     ), type='Resize'),
-    dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
+    dict(
+        poly2mask=True, type='LoadAnnotations', with_bbox=True,
+        with_mask=True),
     dict(
         meta_keys=(
             'img_id',
@@ -305,7 +306,7 @@ test_pipeline = [
 train_cfg = dict(max_epochs=12, type='EpochBasedTrainLoop', val_interval=3)
 train_dataloader = dict(
     batch_sampler=dict(type='AspectRatioBatchSampler'),
-    batch_size=1,
+    batch_size=2,
     dataset=dict(
         ann_file='train/annotation_coco.json',
         backend_args=None,
@@ -321,11 +322,40 @@ train_dataloader = dict(
         ]),
         pipeline=[
             dict(backend_args=None, type='LoadImageFromFile'),
-            dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
-            dict(keep_ratio=True, scale=(
-                1333,
-                800,
-            ), type='Resize'),
+            dict(
+                poly2mask=True,
+                type='LoadAnnotations',
+                with_bbox=True,
+                with_mask=True),
+            dict(
+                keep_ratio=True,
+                scales=[
+                    (
+                        1333,
+                        640,
+                    ),
+                    (
+                        1333,
+                        672,
+                    ),
+                    (
+                        1333,
+                        704,
+                    ),
+                    (
+                        1333,
+                        736,
+                    ),
+                    (
+                        1333,
+                        768,
+                    ),
+                    (
+                        1333,
+                        800,
+                    ),
+                ],
+                type='RandomChoiceResize'),
             dict(prob=0.5, type='RandomFlip'),
             dict(type='PackDetInputs'),
         ],
@@ -335,11 +365,38 @@ train_dataloader = dict(
     sampler=dict(shuffle=True, type='DefaultSampler'))
 train_pipeline = [
     dict(backend_args=None, type='LoadImageFromFile'),
-    dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
-    dict(keep_ratio=True, scale=(
-        1333,
-        800,
-    ), type='Resize'),
+    dict(
+        poly2mask=True, type='LoadAnnotations', with_bbox=True,
+        with_mask=True),
+    dict(
+        keep_ratio=True,
+        scales=[
+            (
+                1333,
+                640,
+            ),
+            (
+                1333,
+                672,
+            ),
+            (
+                1333,
+                704,
+            ),
+            (
+                1333,
+                736,
+            ),
+            (
+                1333,
+                768,
+            ),
+            (
+                1333,
+                800,
+            ),
+        ],
+        type='RandomChoiceResize'),
     dict(prob=0.5, type='RandomFlip'),
     dict(type='PackDetInputs'),
 ]
@@ -364,7 +421,11 @@ val_dataloader = dict(
                 1333,
                 800,
             ), type='Resize'),
-            dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
+            dict(
+                poly2mask=True,
+                type='LoadAnnotations',
+                with_bbox=True,
+                with_mask=True),
             dict(
                 meta_keys=(
                     'img_id',
@@ -399,4 +460,4 @@ visualizer = dict(
     vis_backends=[
         dict(type='LocalVisBackend'),
     ])
-work_dir = '/scratch/hshang/moody/mmdetection_MINS/dcnv2'
+work_dir = '/scratch/hshang/moody/mmdetection_MINS/mask_combo_loss_higher_res'

@@ -146,8 +146,8 @@ def crop_from_bbox(bbox, mask, mV_pixel):
     return signal
 
 def readOut(header_path, masks, bboxes, mV_pixel, format):
-    
-    if len(bboxes.shape[0]) < 13:
+    print(bboxes.shape[0])
+    if bboxes.shape[0] < 13:
         return np.zeros((num_samples, 12))
     
     with open(header_path, 'r') as f:
@@ -157,7 +157,8 @@ def readOut(header_path, masks, bboxes, mV_pixel, format):
 
     bboxes, masks = bboxes_sorting(bboxes, masks)
 
-    signals_np = np.full((12, num_samples), np.nan)
+    # signals_np = np.full((12, num_samples), np.nan)
+    signals_np = np.zeros((12, num_samples))
 
     for i in range(12):
         signal = crop_from_bbox(bboxes[12] if i == 1 else bboxes[i], masks[12] if i == 1 else masks[i], mV_pixel)
@@ -189,7 +190,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         verify_environment()
         work_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'work_dir')
         self.work_dir = work_dir
-        self.config = os.path.join(work_dir, "dcnv2.py")
+        self.config = os.path.join(work_dir, "mask-rcnn_r50-caffe_fpn_ms-poly-3x_ecg.py")
         self.model = None
 
 
