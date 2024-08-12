@@ -1,18 +1,19 @@
 import os
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
-import cv2
+# import matplotlib.pyplot as plt
+# import cv2
 
 from tqdm import *
-from ecg_models import build_model
+from TeamCode.src.ecg_models import build_model
 from imageio import imread, imwrite
-from torch.autograd import Variable
+# from torch.autograd import Variable
+from concurrent.futures import ThreadPoolExecutor
 
 
 class ECGPredictor(object):
 
-    def __init__(self, model_name, model_path, bboxes=None, size=128, cbam=False):
+    def __init__(self, model_name, model_path, size=128, cbam=False):
 
         self.model = build_model(model_name, cbam)
         self.model.load_state_dict(torch.load(model_path, map_location='cpu'))
@@ -23,7 +24,6 @@ class ECGPredictor(object):
             self.model.cuda()
 
         self.size = size
-        self.bboxes = bboxes
         self.res_maps = []
         return
 
@@ -41,17 +41,39 @@ class ECGPredictor(object):
         prednp = pred.cpu().detach().numpy()
         return prednp
     
-    def run(self, image):
-        for _, bbox in enumerate(self.bboxes):
-            res_map = self.__run(image, bbox)
-            self.res_maps.append(res_map)
-        return self.res_maps, self.bboxes
+    
+    def run(self, images, bboxes):
+        self.res_maps = [None] * len(bboxes)  # Initialize with None to preserve order
+        
+        def process_bbox(index, image, bbox):
+            return index, self.__run(image, bbox)
+        
+        with ThreadPoolExecutor() as executor:
+            # Submit tasks with their indices
+            futures = {executor.submit(process_bbox, i, images[i], bbox): i for i, bbox in enumerate(bboxes)}
+            
+            for future in futures:
+                index, res_map = future.result()  # Get index and result from the future
+                self.res_maps[index] = res_map  # Place result in the correct index
+        assert len(self.res_maps) == len(images), f"Length of res_maps and images do not match: {len(self.res_maps)} != {len(images)}"
+        # pad the res_maps with 0s to match the size of the images and convert to numpy array
+        masks = np.zeros_like(images)
+        for i, res_map in enumerate(self.res_maps):
+            x1, y1, x2, y2 = bboxes[i]
+            masks[i, y1:y2, x1:x2] = res_map
+        
+        
+        # res_maps = torch.tensor(self.res_maps)
+        # assert res_maps.shape == images.shape, f"Shapes of res_maps and images do not match: {res_maps.shape} != {images.shape}"
+        return masks, bboxes
 
 
     def __run(self, image, bbox=None):
+        assert image.ndim == 2, "Image should be grayscale, but has shape: {}".format(image.shape)
         if bbox is not None:
-            x1, y1, x2, y2 = self.bbox
+            x1, y1, x2, y2 = bbox
             image = image[y1:y2, x1:x2]
+        
         h, w = image.shape
         p = self.size // 2
         image_pad = np.pad(image, ((p, p), (p, p)), mode='constant')

@@ -9,6 +9,8 @@ import os
 import torch
 import warnings
 
+from TeamCode.src.ecg_predict import ECGPredictor
+
 from mmengine.config import Config, DictAction
 from mmengine.registry import RUNNERS
 from mmengine.runner import Runner
@@ -145,7 +147,24 @@ def crop_from_bbox(bbox, mask, mV_pixel):
 
     return signal
 
+def unet_crop_from_bbox(bbox, mask, mV_pixel):
+    ecg_segment = mask
+
+    weighting_matrix = np.linspace((bbox[3] - bbox[1])*mV_pixel/2, -1*(bbox[3] - bbox[1])*mV_pixel/2, num=ecg_segment.shape[0]).reshape(-1, 1)
+    weighted_ecg_segment = ecg_segment * weighting_matrix
+
+    denominator = np.sum(ecg_segment, axis=0)
+    numerator = np.sum(weighted_ecg_segment, axis=0)
+
+    signal = np.full(denominator.shape, np.nan)
+    valid_idx = denominator >= 1
+    signal[valid_idx] = numerator[valid_idx] / denominator[valid_idx]
+
+    return signal
+    
+
 def readOut(header_path, masks, bboxes, mV_pixel, format):
+    bboxes = bboxes.astype(int)
     print(bboxes.shape[0])
     if bboxes.shape[0] < 13:
         empty_boxes = np.full((num_samples, 12), np.nan)
@@ -194,6 +213,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         self.work_dir = work_dir
         self.config = os.path.join(work_dir, "mask-rcnn_r50-caffe_fpn_ms-poly-3x_ecg.py")
         self.model = None
+        self.unet = None
 
 
     @classmethod
@@ -206,6 +226,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
         # Initialize the model using instance-specific variables
         instance.model = init_detector(instance.config, checkpoint_file, device=dev)
+        instance.unet = ECGPredictor('resunet10', os.path.join(instance.work_dir,'unet.pth'), size=128, cbam=False)
 
         if verbose:
             print(f"Model loaded from {checkpoint_file}")
@@ -308,9 +329,12 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
         bboxes, labels, scores, masks = filter_boxes(bboxes, labels, scores, masks)
         
+        to_be_readout, bboxes = self.unet.run(masks, bboxes)
+        
         mV_pixel = (25.4 *8.5*0.5)/(masks[0].shape[0]*5) #hardcoded for now
         header_path = hc.get_header_file(record)
-        signal=readOut(header_path, masks, bboxes, mV_pixel, format)
+        # signal=readOut(header_path, masks, bboxes, mV_pixel, 'unet')
+        signal=readOut(header_path, to_be_readout, bboxes, mV_pixel, 'unet')
         return signal
     
 
