@@ -148,7 +148,9 @@ def crop_from_bbox(bbox, mask, mV_pixel):
 def readOut(header_path, masks, bboxes, mV_pixel, format):
     print(bboxes.shape[0])
     if bboxes.shape[0] < 13:
-        return np.zeros((num_samples, 12))
+        empty_boxes = np.full((num_samples, 12), np.nan)
+        empty_boxes[:num_samples/4, :] = np.zeros((num_samples/4, 12))
+        return empty_boxes
     
     with open(header_path, 'r') as f:
         input_header = f.read()

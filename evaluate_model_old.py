@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 
-# copy pastes from https://github.com/physionetchallenges/evaluation-2024/blob/main/evaluate_model.py on Aug 7
-
 # Do *not* edit this script. Changes will be discarded so that we can process the models consistently.
 
 # This file contains functions for evaluating models for the Challenge. You can run it as follows:
