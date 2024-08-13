@@ -12,6 +12,7 @@
 import argparse
 import os
 import sys
+import time
 
 from helper_code import *
 from team_code import load_models, run_models
@@ -91,4 +92,7 @@ def run(args):
         print('Done.')
 
 if __name__ == '__main__':
+    time_start = time.time()
     run(get_parser().parse_args(sys.argv[1:]))
+    time_end = time.time()
+    print(f'Time elapsed: {time_end - time_start:.2f} seconds')

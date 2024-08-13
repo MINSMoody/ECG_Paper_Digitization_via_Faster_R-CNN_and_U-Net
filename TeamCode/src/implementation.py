@@ -108,23 +108,39 @@ def filter_boxes(pred_bboxes, pred_labels, pred_scores, pred_masks):
     
     return pred_bboxes, pred_labels, pred_scores, pred_masks
 
+def bboxes_sorting_12(bboxes, masks):
+    bboxes_avg_H = list((bboxes[:,1]+bboxes[:,3])/2)
+    bboxes_avg_W = list((bboxes[:,0]+bboxes[:,2])/2)
+    bboxes_avg = np.array([bboxes_avg_H, bboxes_avg_W]).transpose()
+    # sort by W
+    sortW_idx = bboxes_avg[:, 1].argsort()
+    bboxes_avg = bboxes_avg[sortW_idx]
+    masks = masks[sortW_idx]
+    bboxes = bboxes[sortW_idx]
+    col1 = list(bboxes_avg[0:3, 0].argsort())
+    col2 = list(bboxes_avg[3:6, 0].argsort()+3)
+    col3 = list(bboxes_avg[6:9, 0].argsort()+6)
+    col4 = list(bboxes_avg[9:12, 0].argsort()+9)
+    idx = col1+col2+col3+col4
+    masks = masks[idx]
+    bboxes = bboxes[idx]
+    return bboxes, masks
 
-def bboxes_sorting(bboxes, masks):
-    if len(bboxes) != 13:
-        warnings.warn(f"Expected 13 boxes, got {len(bboxes)}", UserWarning)
+
+
+def bboxes_sorting_13(bboxes, masks):
 
     bboxes_avg_H = list((bboxes[:,1]+bboxes[:,3])/2)
     bboxes_avg_W = list((bboxes[:,0]+bboxes[:,2])/2)
     bboxes_avg = np.array([bboxes_avg_H, bboxes_avg_W]).transpose()
     
     sortH_idx = bboxes_avg[:, 0].argsort()
-    if len(bboxes) > 12:
-        #first take the long leads and 3x4
-        mask_last = masks[sortH_idx[12]]
-        bbox_last = bboxes[sortH_idx[12]]
-        bboxes_avg = bboxes_avg[sortH_idx[0:12]]
-        masks = masks[sortH_idx[0:12]]
-        bboxes = bboxes[sortH_idx[0:12]]
+    #first take the long leads and 3x4
+    mask_last = masks[sortH_idx[12]]
+    bbox_last = bboxes[sortH_idx[12]]
+    bboxes_avg = bboxes_avg[sortH_idx[0:12]]
+    masks = masks[sortH_idx[0:12]]
+    bboxes = bboxes[sortH_idx[0:12]]
     
     #then sort by W
     sortW_idx = bboxes_avg[:, 1].argsort()
@@ -138,9 +154,10 @@ def bboxes_sorting(bboxes, masks):
     idx = col1+col2+col3+col4
     masks = masks[idx]
     bboxes = bboxes[idx]
-    if len(bboxes) > 12:
-        bboxes = np.append(bboxes, bbox_last.reshape((1,-1)), axis=0)
-        masks = np.append(masks, mask_last.reshape((1,mask_last.shape[0],mask_last.shape[1])), axis=0)
+    bboxes[1] = bbox_last
+    masks[1] = mask_last
+    # bboxes = np.append(bboxes, bbox_last.reshape((1,-1)), axis=0)
+    # masks = np.append(masks, mask_last.reshape((1,mask_last.shape[0],mask_last.shape[1])), axis=0)
     return bboxes, masks
 
 
@@ -163,67 +180,70 @@ def crop_from_bbox(bbox, mask, mV_pixel):
     signal = np.full(denominator.shape, np.nan)
     valid_idx = denominator >= 1
     signal[valid_idx] = numerator[valid_idx] / denominator[valid_idx]
+    # check if signal is all nan
+    if np.isnan(np.sum(signal)):
+        warnings.warn("Signal is all nan", UserWarning)
 
     return signal
 
-# def unet_crop_from_bbox(bbox, mask, mV_pixel):
-#     ecg_segment = mask
-
-#     weighting_matrix = np.linspace((bbox[3] - bbox[1])*mV_pixel/2, -1*(bbox[3] - bbox[1])*mV_pixel/2, num=ecg_segment.shape[0]).reshape(-1, 1)
-#     weighted_ecg_segment = ecg_segment * weighting_matrix
-
-#     denominator = np.sum(ecg_segment, axis=0)
-#     numerator = np.sum(weighted_ecg_segment, axis=0)
-
-#     signal = np.full(denominator.shape, np.nan)
-#     valid_idx = denominator >= 1
-#     signal[valid_idx] = numerator[valid_idx] / denominator[valid_idx]
-
-#     return signal
-    
 
 def readOut(header_path, masks, bboxes, mV_pixel):
     bboxes = bboxes.astype(int)
-    print(bboxes.shape[0])
+    # print(bboxes.shape[0])
     
-    if bboxes.shape[0] < 12:
-        empty_boxes = np.full((num_samples, 12), np.nan)
-        empty_boxes[:num_samples/4, :] = np.zeros((num_samples/4, 12))
-        return empty_boxes
+
     
     with open(header_path, 'r') as f:
         input_header = f.read()
 
     num_samples = get_num_samples(input_header)
-
-    bboxes, masks = bboxes_sorting(bboxes, masks)
-
-    signals_np = np.full((12, num_samples), np.nan)
-    # signals_np = np.zeros((12, num_samples))
-
-    for i in range(bboxes.shape[0]-1):
-        if bboxes.shape[0] == 13:
-            signal = crop_from_bbox(bboxes[12] if i == 1 else bboxes[i], masks[12] if i == 1 else masks[i], mV_pixel)
-        else:
+    # case 1: less than 12 boxes, return nan
+    if bboxes.shape[0] < 12 or bboxes.shape[0] != masks.shape[0]:
+        empty_signals_np = np.full((12, num_samples), np.nan)
+        lead_length = num_samples // 4
+        empty_signals_np[0:3,0:lead_length] = 0
+        empty_signals_np[3:6,lead_length:2*lead_length] = 0
+        empty_signals_np[6:9,2*lead_length:3*lead_length] = 0
+        empty_signals_np[9:12,3*lead_length:4*lead_length] = 0
+        return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
+        
+    # case 2: 12 bboxes, filter boxes
+    if bboxes.shape[0] == 12:
+        bboxes, masks = bboxes_sorting_12(bboxes, masks)
+        signals_np = np.full((12, num_samples), np.nan)
+        for i in range(bboxes.shape[0]-1):
             signal = crop_from_bbox(bboxes[i], masks[i], mV_pixel)
-            
-        signal = interpolate_nan(signal) - np.mean(signal)
-
-        signallen = num_samples if i == 1 else num_samples // 4
-        signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
-
-        if i == 1:
-            signals_np[i] = signal
-        else:
+            signal = interpolate_nan(signal) - np.mean(signal)
+            signal = np.clip(signal, -2, 2)
+            signallen = num_samples // 4
+            signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
             start_idx = (num_samples // 4) * (i // 3)
             end_idx = start_idx + (num_samples // 4)
             signals_np[i, start_idx:end_idx] = signal
+        signals_np = np.clip(signals_np, -2, 2)
+        return signals_np.T if signals_np.shape[1] > signals_np.shape[0] else signals_np
 
-    print(header_path)
-    print(f'min max: {np.nanmin(signals_np)}, {np.nanmax(signals_np)}')
-    print(f'nan count: {np.isnan(signals_np).sum()}')
 
-    return signals_np.T if signals_np.shape[1] > signals_np.shape[0] else signals_np
+
+    # case 3: at least 13 bboxes
+    if bboxes.shape[0] >= 13:
+        bboxes, masks = bboxes_sorting_13(bboxes, masks)
+        signals_np = np.full((12, num_samples), np.nan)
+
+        for i in range(12):
+            signal = crop_from_bbox(bboxes[i], masks[i], mV_pixel)   
+            signal = interpolate_nan(signal) - np.mean(signal)
+            signal = np.clip(signal, -2, 2)
+            signallen = num_samples if i == 1 else num_samples // 4
+            signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
+            if i == 1:
+                signals_np[i] = signal
+            else:
+                start_idx = (num_samples // 4) * (i // 3)
+                end_idx = start_idx + (num_samples // 4)
+                signals_np[i, start_idx:end_idx] = signal
+
+        return signals_np.T if signals_np.shape[1] > signals_np.shape[0] else signals_np
 
 
 
@@ -249,7 +269,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
         # Initialize the model using instance-specific variables
         instance.model = init_detector(instance.config, checkpoint_file, device=dev)
-        instance.unet = ECGPredictor('resunet10', os.path.join(instance.work_dir,'model.pth'), size=128, cbam=False)
+        instance.unet = ECGPredictor('resunet10', os.path.join(instance.work_dir,'model.pth'), size=208, cbam=False)
 
         if verbose:
             print(f"Model loaded from {checkpoint_file}")
@@ -358,7 +378,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         # assert len(bboxes) == masks.shape[0], f"Expected {len(bboxes)} bboxes, got {masks.shape[0]}"
         image = img/255.0
         
-        to_be_readout = self.unet.run(image, bboxes)
+        to_be_readout = self.unet.run(image, bboxes) # float
         to_be_readout = np.where(to_be_readout > 0.3, True, False)
         # print(min(to_be_readout[0]), max(to_be_readout[0]))
         assert len(to_be_readout) == 13, f"Expected 13 signals, got {len(to_be_readout)}"
@@ -366,8 +386,13 @@ class OurDigitizationModel(AbstractDigitizationModel):
         
         # assert to_be_readout.shape == masks.shape, f"Expected shape {masks.shape}, got {to_be_readout.shape}"
         # assert to_be_readout.shape[0] == 13, f"Expected 13 signals, got {to_be_readout.shape[0]}"
+        # if masks.shape[0] < 13:
+        #     # add empty masks
+        #     empty_masks = np.zeros((13 - masks.shape[0], masks.shape[1], masks.shape[2]))
+        #     masks = np.append(masks, empty_masks, axis=0)
         # to_be_readout = to_be_readout + masks
         mV_pixel = (25.4 *8.5*0.5)/(masks[0].shape[0]*5) #hardcoded for now
+        # mV_pixel = (1.5*25.4 *8.5*0.5)/(masks[0].shape[0]*5)
         header_path = hc.get_header_file(record)
         # load gt masks for debuging:
         # directory_path = os.path.dirname(img_path)
@@ -378,9 +403,10 @@ class OurDigitizationModel(AbstractDigitizationModel):
         # for bbox in bboxes:
         #     x1, y1, x2, y2 = bbox
         #     gt_mask = np.zeros_like(gt_mask_load)
-        #     gt_mask[y1:y2, x1:x2] = gt_mask[y1:y2, x1:x2]
+        #     gt_mask[y1:y2, x1:x2] = gt_mask_load[y1:y2, x1:x2]
+        #     # mmcv.imwrite(gt_mask, 'gt_mask.png')
         #     gt_masks.append(gt_mask)
-        # gt_masks = np.array(masks)
+        # gt_masks = np.array(gt_masks)
         
         # assert gt_masks.shape == to_be_readout.shape, f"Expected shape {to_be_readout.shape}, got {gt_masks.shape}"
         # signal=readOut(header_path, masks, bboxes, mV_pixel)
