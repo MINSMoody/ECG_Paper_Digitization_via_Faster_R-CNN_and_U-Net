@@ -8,7 +8,7 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent_dir)
 from src.interface import AbstractDigitizationModel, AbstractClassificationModel
 
-from src import helper_code as hc
+import helper_code as hc
 import os
 import pickle
 
