@@ -4,3 +4,7 @@ __pycache__/
 output/
 TeamCode/tests/resources/example_output/*
 TeamCode/src/old_model/*
+TeamCode/tests/resources/test_data/*
+images.pkl
+TeamCode/src/work_dir/model_200.pth
+TeamCode/src/work_dir/unet_200.pth
