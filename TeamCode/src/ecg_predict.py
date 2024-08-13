@@ -60,8 +60,8 @@ class ECGPredictor(object):
                 self.res_maps[index] = res_map  # Place result in the correct index
         # assert len(self.res_maps) == len(images), f"Length of res_maps and images do not match: {len(self.res_maps)} != {len(images)}"
         #save the res_maps as a pickle file
-        with open('images.pkl', 'wb') as f:
-            pickle.dump(self.res_maps, f)
+        # with open('images.pkl', 'wb') as f:
+        #     pickle.dump(self.res_maps, f)
         # pad the res_maps with 0s to match the size of the images and convert to numpy array
         masks = np.zeros((13, image.shape[0], image.shape[1]))
         for i, res_map in enumerate(self.res_maps):
