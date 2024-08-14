@@ -13,6 +13,7 @@ import argparse
 import os
 import sys
 import time
+from tqdm import tqdm
 
 from helper_code import *
 from team_code import load_models, run_models
@@ -55,7 +56,7 @@ def run(args):
         print('Running the Challenge model(s) on the Challenge data...')
 
     # Iterate over the records.
-    for i in range(num_records):
+    for i in tqdm(range(num_records)):
         if args.verbose:
             width = len(str(num_records))
             print(f'- {i+1:>{width}}/{num_records}: {records[i]}...')
