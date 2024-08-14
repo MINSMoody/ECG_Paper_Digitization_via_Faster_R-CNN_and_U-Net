@@ -6,10 +6,13 @@ import helper_code as hc
 import numpy as np
 import os
 
+import threading
+
 import torch
 import warnings
 
 from TeamCode.src.ecg_predict import ECGPredictor
+from TeamCode.src.ecg_main import ECGSegment
 
 from mmengine.config import Config, DictAction
 from mmengine.registry import RUNNERS
@@ -19,6 +22,7 @@ import mmcv
 from mmdet.apis import init_detector, inference_detector
 from helper_code import get_num_samples, get_signal_names, get_image_files
 from scipy import interpolate
+
 device = os.environ.get("EXPECTEDDEVICE", "unspecified")
 if device == 'unspecified':
     print("Not running in a docker container")
@@ -89,18 +93,18 @@ def filter_boxes(pred_bboxes, pred_labels, pred_scores, pred_masks):
         pred_labels = pred_labels[sorted_indices][:13]
         pred_masks = pred_masks[sorted_indices][:13]
         pred_scores = pred_scores[sorted_indices][:13]
-    elif len(pred_bboxes) < 12:
-        # Pad the remaining slots with the highest scoring bboxes
-        top_indices = np.argsort(pred_scores)[::-1]
-        while len(pred_bboxes) < 13:
-            for idx in top_indices:
-                if len(pred_bboxes) < 13:
-                    pred_bboxes = np.append(pred_bboxes, [pred_bboxes[idx]], axis=0)
-                    pred_labels = np.append(pred_labels, [pred_labels[idx]], axis=0)
-                    pred_masks = np.append(pred_masks, [pred_masks[idx]], axis=0)
-                    pred_scores = np.append(pred_scores, [pred_scores[idx]], axis=0)
-                else:
-                    break
+    # elif len(pred_bboxes) < 12:
+    #     # Pad the remaining slots with the highest scoring bboxes
+    #     top_indices = np.argsort(pred_scores)[::-1]
+    #     while len(pred_bboxes) < 13:
+    #         for idx in top_indices:
+    #             if len(pred_bboxes) < 13:
+    #                 pred_bboxes = np.append(pred_bboxes, [pred_bboxes[idx]], axis=0)
+    #                 pred_labels = np.append(pred_labels, [pred_labels[idx]], axis=0)
+    #                 pred_masks = np.append(pred_masks, [pred_masks[idx]], axis=0)
+    #                 pred_scores = np.append(pred_scores, [pred_scores[idx]], axis=0)
+    #             else:
+    #                 break
     
     
     if len(pred_bboxes) != 13:
@@ -181,10 +185,23 @@ def crop_from_bbox(bbox, mask, mV_pixel):
     valid_idx = denominator >= 1
     signal[valid_idx] = numerator[valid_idx] / denominator[valid_idx]
     # check if signal is all nan
-    if np.isnan(np.sum(signal)):
+    if np.isnan(signal).all():
         warnings.warn("Signal is all nan", UserWarning)
 
     return signal
+
+# median method
+# def crop_from_bbox(bbox, mask, mV_pixel):
+#     bbox = bbox.astype(int)
+#     ecg_segment = mask[bbox[1]:bbox[3]+1, bbox[0]:bbox[2]+1]
+
+#     height = ecg_segment.shape[0]
+
+#     a = -1*mV_pixel*height/(height-1)
+#     b = mV_pixel*height/2
+#     signal = [a*np.median(np.argwhere(ecg_segment[:,i]))+b if len(np.argwhere(ecg_segment[:,i]))>1 else np.nan  for i in range(ecg_segment.shape[1])]
+#     signal = np.array(signal)
+#     return signal
 
 
 def readOut(header_path, masks, bboxes, mV_pixel):
@@ -197,8 +214,12 @@ def readOut(header_path, masks, bboxes, mV_pixel):
         input_header = f.read()
 
     num_samples = get_num_samples(input_header)
-    # case 1: less than 12 boxes, return nan
-    if bboxes.shape[0] < 12 or bboxes.shape[0] != masks.shape[0]:
+    # set the number of masks same as bboxes
+    # masks = masks[:bboxes.shape[0], :, :]
+    # case 1: less than 12 boxes, return empty signals
+    assert bboxes.shape[0] == masks.shape[0], f"Expected shape {bboxes.shape[0]}, got {masks.shape[0]}"
+    if bboxes.shape[0] < 12:
+        # failed to detect 12 leads
         empty_signals_np = np.full((12, num_samples), np.nan)
         lead_length = num_samples // 4
         empty_signals_np[0:3,0:lead_length] = 0
@@ -211,7 +232,7 @@ def readOut(header_path, masks, bboxes, mV_pixel):
     if bboxes.shape[0] == 12:
         bboxes, masks = bboxes_sorting_12(bboxes, masks)
         signals_np = np.full((12, num_samples), np.nan)
-        for i in range(bboxes.shape[0]-1):
+        for i in range(bboxes.shape[0]):
             signal = crop_from_bbox(bboxes[i], masks[i], mV_pixel)
             signal = interpolate_nan(signal) - np.mean(signal)
             signal = np.clip(signal, -2, 2)
@@ -265,81 +286,118 @@ class OurDigitizationModel(AbstractDigitizationModel):
         instance = cls()
 
         # Construct checkpoint path based on the model_folder parameter
-        checkpoint_file = os.path.join(instance.work_dir, 'epoch_12.pth')
+        maskrcnn_checkpoint_file = os.path.join(instance.work_dir, 'epoch_12.pth')
 
         # Initialize the model using instance-specific variables
-        instance.model = init_detector(instance.config, checkpoint_file, device=dev)
-        instance.unet = ECGPredictor('resunet10', os.path.join(instance.work_dir,'model.pth'), size=208, cbam=False)
+        instance.model = init_detector(instance.config, maskrcnn_checkpoint_file, device=dev)
+        instance.unet = ECGPredictor('resunet10', os.path.join(instance.work_dir,'segmentation_model.pth'), size=208, cbam=False)
 
         if verbose:
-            print(f"Model loaded from {checkpoint_file}")
+            print(f"Model loaded from {maskrcnn_checkpoint_file}")
 
         return instance
 
+    def train_detection_model(self, cfg, model_folder, verbose):
+        if verbose:
+            print("Training detection model...")
+        
+        cfg.work_dir = model_folder
+        # build the runner from config
+        if 'runner_type' not in cfg:
+            # build the default runner
+            runner = Runner.from_cfg(cfg)
+        else:
+            # build customized runner from the registry
+            # if 'runner_type' is set in the cfg
+            runner = RUNNERS.build(cfg)
+            
+        # start training
+        runner.train()
+        
+        if verbose:
+            print("Detection model training completed.")
+
+    def train_segmentation_model(self, data_folder, model_folder, work_dir, verbose):
+        if verbose:
+            print("Training segmentation model...")
+        
+        param_file = os.path.join(work_dir, 'ecg_params.json')
+        param_set = "segmentation"
+        unet_data_dir = os.path.join(data_folder, 'cropped_img')
+        ecg = ECGSegment(
+            param_file=param_file,
+            param_set=param_set
+        )
+        ecg.run(
+            data_dir=unet_data_dir,
+            models_dir=model_folder,
+            cv=5,
+            resume_training=True,
+            checkpoint_path=os.path.join(work_dir, 'segmentation_base_model.pth')
+        )
+        
+        if verbose:
+            print("Segmentation model training completed.")
+
     def train_model(self, data_folder, model_folder, verbose):
-        print("We did not implement training the digitization model from (Image, Signal) pairs. Since we need extra context information generated by ecg-toolkit for training.")
-        pass
-        # if verbose:
-        #     print('Training the digitization model...')
-        #     print('Finding the Challenge data...')
+        if verbose:
+            print('Training the digitization model...')
+            print('Finding the Challenge data...')
 
-        # # Reduce the number of repeated compilations and improve
-        # # training speed.
-        # setup_cache_size_limit_of_dynamo()
-
-        # # load config
-        # base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
-        # work_dir = os.path.join(base_dir, 'work_dir')
-        # config_file_path = os.path.join(work_dir, 'maskrcnn_config.py')
-        # cfg = Config.fromfile(config_file_path)
-
-
-        # cfg.work_dir = model_folder
-        # # "moody/official-phase-mins-eth/TeamCode/work_dir"
+        # Reduce the number of repeated compilations and improve
+        # training speed.
+        setup_cache_size_limit_of_dynamo()
         
-        # cfg.data_root = data_folder
-        # assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
-        # cfg.load_from = os.path.join(base_dir,'checkpoints', 'mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth')
+        # load config
+        base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
+        work_dir = os.path.join(base_dir, 'work_dir')
+        config_file_path = os.path.join(work_dir, 'maskrcnn_config.py')
+        cfg = Config.fromfile(config_file_path)
+        cfg.metainfo = {
+            'classes': ('ecg_lead', ),
+            'palette': [
+                (220, 20, 60),
+            ]
+        }
+        cfg.train_dataloader.dataset.ann_file = 'train/annotation_coco.json'
+        cfg.train_dataloader.dataset.data_root = cfg.data_root
+        cfg.train_dataloader.dataset.data_prefix.img = 'train/'
+        cfg.train_dataloader.dataset.metainfo = cfg.metainfo
+
+        cfg.val_dataloader.dataset.ann_file = 'val/annotation_coco.json'
+        cfg.val_dataloader.dataset.data_root = cfg.data_root
+        cfg.val_dataloader.dataset.data_prefix.img = 'val/'
+        cfg.val_dataloader.dataset.metainfo = cfg.metainfo
+
+        cfg.test_dataloader = cfg.val_dataloader
+
+        # Modify metric config
+        cfg.val_evaluator.ann_file = cfg.data_root+'/'+'val/annotation_coco.json'
+        cfg.test_evaluator = cfg.val_evaluator
         
+        cfg.work_dir = os.path.join(model_folder, 'maskrcnn_config.py')
+        cfg.data_root = data_folder
+        assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
+        cfg.load_from = os.path.join(base_dir,'checkpoints', 'mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth')
 
+        cfg.optim_wrapper.type = 'AmpOptimWrapper'
+        cfg.optim_wrapper.loss_scale = 'dynamic'
 
-        # # # enable automatic-mixed-precision training
-        # # if args.amp is True:
-        # #     cfg.optim_wrapper.type = 'AmpOptimWrapper'
-        # #     cfg.optim_wrapper.loss_scale = 'dynamic'
+        # Start the training in separate threads
+        detection_thread = threading.Thread(target=self.train_detection_model, args=(cfg, model_folder, verbose))
+        segmentation_thread = threading.Thread(target=self.train_segmentation_model, args=(data_folder, model_folder, work_dir, verbose))
+        
+        detection_thread.start()
+        segmentation_thread.start()
 
-        # # enable automatically scaling LR
-        # # if args.auto_scale_lr:
-        # #     if 'auto_scale_lr' in cfg and \
-        # #             'enable' in cfg.auto_scale_lr and \
-        # #             'base_batch_size' in cfg.auto_scale_lr:
-        # #         cfg.auto_scale_lr.enable = True
-        # #     else:
-        # #         raise RuntimeError('Can not find "auto_scale_lr" or '
-        # #                         '"auto_scale_lr.enable" or '
-        # #                         '"auto_scale_lr.base_batch_size" in your'
-        # #                         ' configuration file.')
+        # Wait for both threads to complete
+        detection_thread.join()
+        segmentation_thread.join()
 
-        # # resume is determined in this priority: resume from > auto_resume
-        # # if args.resume == 'auto':
-        # #     cfg.resume = True
-        # #     cfg.load_from = None
-        # # elif args.resume is not None:
-        # #     cfg.resume = True
-        # #     cfg.load_from = args.resume
-
-        # # build the runner from config
-        # if 'runner_type' not in cfg:
-        #     # build the default runner
-        #     runner = Runner.from_cfg(cfg)
-        # else:
-        #     # build customized runner from the registry
-        #     # if 'runner_type' is set in the cfg
-        #     runner = RUNNERS.build(cfg)
-
-        # # start training
-        # runner.train()
-
+        if verbose:
+            print("Both detection and segmentation models have been trained.")
+        
+        
 
     
     def run_digitization_model(self, record, verbose):
@@ -370,20 +428,29 @@ class OurDigitizationModel(AbstractDigitizationModel):
         scores = pred['scores'].cpu().detach().numpy()
         labels = pred['labels'].cpu().detach().numpy()
         
+        
+        
         # patches = crop_from_bbox(bboxes, img)
         
         # print(f"patches shape: {patches[0].shape}")
 
         bboxes, labels, scores, masks = filter_boxes(bboxes, labels, scores, masks)
+        assert len(bboxes) >= 12, f"Expected at least 12 bboxes, got {len(bboxes)}"
         # assert len(bboxes) == masks.shape[0], f"Expected {len(bboxes)} bboxes, got {masks.shape[0]}"
         image = img/255.0
+        # assert bboxes.shape == (13, 4), f"Expected shape (13, 4), got {bboxes.shape}"
         
         to_be_readout = self.unet.run(image, bboxes) # float
         to_be_readout = np.where(to_be_readout > 0.3, True, False)
         # print(min(to_be_readout[0]), max(to_be_readout[0]))
-        assert len(to_be_readout) == 13, f"Expected 13 signals, got {len(to_be_readout)}"
+        # assert len(to_be_readout) == 13, f"Expected 13 signals, got {len(to_be_readout)}"
+        assert len(bboxes) == len(to_be_readout), f"Expected {len(bboxes)} signals, got {len(to_be_readout)}"
         assert to_be_readout[0].shape == (img.shape[0], img.shape[1]), f"Expected shape {(img.shape[0], img.shape[1])}, got {to_be_readout[0].shape}"
         
+        import pickle
+        to_dump = {'bboxes': bboxes, 'masks': to_be_readout, 'scores': scores, 'labels': labels, 'record': record}
+        with open('to_dump.pkl', 'wb') as f:
+            pickle.dump(to_dump, f)
         # assert to_be_readout.shape == masks.shape, f"Expected shape {masks.shape}, got {to_be_readout.shape}"
         # assert to_be_readout.shape[0] == 13, f"Expected 13 signals, got {to_be_readout.shape[0]}"
         # if masks.shape[0] < 13:

@@ -63,7 +63,7 @@ class ECGPredictor(object):
         # with open('images.pkl', 'wb') as f:
         #     pickle.dump(self.res_maps, f)
         # pad the res_maps with 0s to match the size of the images and convert to numpy array
-        masks = np.zeros((13, image.shape[0], image.shape[1]))
+        masks = np.zeros((bboxes.shape[0], image.shape[0], image.shape[1]))
         for i, res_map in enumerate(self.res_maps):
             x1, y1, x2, y2 = bboxes[i]
             masks[i, y1:y2, x1:x2] = res_map

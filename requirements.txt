@@ -2,3 +2,5 @@ numpy
 pandas
 pillow
 wfdb
+scikit-learn
+pycocotools

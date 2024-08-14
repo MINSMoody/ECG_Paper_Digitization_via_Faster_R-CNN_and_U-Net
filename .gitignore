@@ -8,3 +8,11 @@ TeamCode/tests/resources/test_data/*
 images.pkl
 TeamCode/src/work_dir/model_200.pth
 TeamCode/src/work_dir/unet_200.pth
+TeamCode/src/work_dir/2024*/
+to_dump.pkl
+trainset.pkl
+validset.pkl
+TeamCode/src/work_dir/model_cbam.pth
+TeamCode/src/work_dir/epoch_3.pth
+TeamCode/src/work_dir/epoch_6.pth
+TeamCode/src/work_dir/epoch_9.pth
