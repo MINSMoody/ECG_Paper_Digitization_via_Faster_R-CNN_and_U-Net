@@ -217,7 +217,7 @@ def readOut(header_path, masks, bboxes, mV_pixel):
     # set the number of masks same as bboxes
     # masks = masks[:bboxes.shape[0], :, :]
     # case 1: less than 12 boxes, return empty signals
-    assert bboxes.shape[0] == masks.shape[0], f"Expected shape {bboxes.shape[0]}, got {masks.shape[0]}"
+    # assert bboxes.shape[0] == masks.shape[0], f"Expected shape {bboxes.shape[0]}, got {masks.shape[0]}"
     if bboxes.shape[0] < 12:
         # failed to detect 12 leads
         empty_signals_np = np.full((12, num_samples), np.nan)
@@ -436,7 +436,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         # print(f"patches shape: {patches[0].shape}")
 
         bboxes, labels, scores, masks = filter_boxes(bboxes, labels, scores, masks)
-        assert len(bboxes) >= 12, f"Expected at least 12 bboxes, got {len(bboxes)}"
+        # assert len(bboxes) >= 12, f"Expected at least 12 bboxes, got {len(bboxes)}"
         # assert len(bboxes) == masks.shape[0], f"Expected {len(bboxes)} bboxes, got {masks.shape[0]}"
         image = img/255.0
         # assert bboxes.shape == (13, 4), f"Expected shape (13, 4), got {bboxes.shape}"
@@ -445,8 +445,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
         to_be_readout = np.where(to_be_readout > 0.3, True, False)
         # print(min(to_be_readout[0]), max(to_be_readout[0]))
         # assert len(to_be_readout) == 13, f"Expected 13 signals, got {len(to_be_readout)}"
-        assert len(bboxes) == len(to_be_readout), f"Expected {len(bboxes)} signals, got {len(to_be_readout)}"
-        assert to_be_readout[0].shape == (img.shape[0], img.shape[1]), f"Expected shape {(img.shape[0], img.shape[1])}, got {to_be_readout[0].shape}"
+        # assert len(bboxes) == len(to_be_readout), f"Expected {len(bboxes)} signals, got {len(to_be_readout)}"
+        # assert to_be_readout[0].shape == (img.shape[0], img.shape[1]), f"Expected shape {(img.shape[0], img.shape[1])}, got {to_be_readout[0].shape}"
         
         import pickle
         to_dump = {'bboxes': bboxes, 'masks': to_be_readout, 'scores': scores, 'labels': labels, 'record': record}

@@ -87,9 +87,9 @@ model = dict(
                 type='DeltaXYWHBBoxCoder'),
             fc_out_channels=1024,
             in_channels=256,
-            loss_bbox=dict(loss_weight=1.0, type='L1Loss'),
+            loss_bbox=dict(loss_weight=2.0, type='L1Loss'),
             loss_cls=dict(
-                loss_weight=1.0, type='CrossEntropyLoss', use_sigmoid=False),
+                loss_weight=0.5, type='CrossEntropyLoss', use_sigmoid=False),
             num_classes=1,
             reg_class_agnostic=False,
             roi_feat_size=7,
@@ -108,7 +108,7 @@ model = dict(
             conv_out_channels=256,
             in_channels=256,
             loss_mask=dict(
-                loss_weight=1.0, type='CrossEntropyLoss', use_mask=True),
+                loss_weight=10.0, type='CrossEntropyLoss', use_mask=True),
             num_classes=1,
             num_convs=8,
             type='FCNMaskHead'),
@@ -120,11 +120,7 @@ model = dict(
                 32,
             ],
             out_channels=256,
-            roi_layer=dict(
-                aligned=True,
-                output_size=14,
-                sampling_ratio=0,
-                type='RoIAlign'),
+            roi_layer=dict(output_size=28, sampling_ratio=0, type='RoIAlign', aligned=True),
             type='SingleRoIExtractor'),
         type='StandardRoIHead'),
     rpn_head=dict(
@@ -188,7 +184,7 @@ model = dict(
                 pos_iou_thr=0.5,
                 type='MaxIoUAssigner'),
             debug=False,
-            mask_size=28,
+            mask_size=56,
             pos_weight=-1,
             sampler=dict(
                 add_gt_as_proposals=True,

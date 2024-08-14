@@ -60,8 +60,8 @@ class ECGPredictor(object):
                 self.res_maps[index] = res_map  # Place result in the correct index
         # assert len(self.res_maps) == len(images), f"Length of res_maps and images do not match: {len(self.res_maps)} != {len(images)}"
         #save the res_maps as a pickle file
-        # with open('images.pkl', 'wb') as f:
-        #     pickle.dump(self.res_maps, f)
+        with open('images.pkl', 'wb') as f:
+            pickle.dump(self.res_maps, f)
         # pad the res_maps with 0s to match the size of the images and convert to numpy array
         masks = np.zeros((bboxes.shape[0], image.shape[0], image.shape[1]))
         for i, res_map in enumerate(self.res_maps):
@@ -77,7 +77,7 @@ class ECGPredictor(object):
     def __run(self, image, bbox=None):
         if(image.ndim == 3):
             image = np.dot(image[..., :3], [0.2989, 0.5870, 0.1140])
-        assert image.ndim == 2, "Image should be grayscale, but has shape: {}".format(image.shape)
+        # assert image.ndim == 2, "Image should be grayscale, but has shape: {}".format(image.shape)
         if bbox is not None:
             x1, y1, x2, y2 = bbox
             image = image[y1:y2, x1:x2]
