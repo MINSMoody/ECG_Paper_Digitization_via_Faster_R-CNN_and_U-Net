@@ -2,7 +2,7 @@
 import unittest
 import pytest
 
-from ..src import sample_implementation, interface, helper_code, implementation, evaluate_model
+from ..src import interface, helper_code, implementation, evaluate_model
 import numpy as np
 
 import os
@@ -125,18 +125,15 @@ class TestTools(unittest.TestCase):
         self._run_models(digitization_class, classification_class)
         self._run_evaluation()
 
-    def test_sample_implementation(self):
+    def test_our_implementation(self):
         self._test_both_models(implementation.OurDigitizationModel, implementation.VoidClassificationModel)
         
-    @pytest.mark.skip(reason = "not used any more")
-    def test_Kmeans_implementation(self):
-        self._test_both_models(sample_implementation.KMeansDigitizationModel, sample_implementation.ExampleClassificationModel)
 
 # Haoliang added this for testing
 if __name__ == '__main__':
     # Create a test suite containing the specific test
     suite = unittest.TestSuite()
-    suite.addTest(TestTools('test_sample_implementation'))
+    suite.addTest(TestTools('test_our_implementation'))
     
     # Run the test suite
     runner = unittest.TextTestRunner()

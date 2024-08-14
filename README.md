@@ -111,6 +111,9 @@ then run command with the name instead
 add flag 
 `--gpus all`
 to docker run command. maybe some other too, check the google forum
+```bash
+docker run -it -v ./model:/challenge/model -v ./test_data:/challenge/test_data -v ./test_outputs:/challenge/test_outputs -v ./training_data:/challenge/training_data --gpus all image bash
+```
 
 
 # Testing for submission on Narigpu01.

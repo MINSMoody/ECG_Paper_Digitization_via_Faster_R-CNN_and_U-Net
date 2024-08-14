@@ -1,3 +1,4 @@
+# copied from challenge repo on August 14, last commit 70e2cfd
 #!/usr/bin/env python
 
 # Do *not* edit this script.
