@@ -1,3 +1,5 @@
+# copied on August 14, last commit ea9c282
+
 #!/usr/bin/env python
 
 # Do *not* edit this script. Changes will be discarded so that we can process the models consistently.
