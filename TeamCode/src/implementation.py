@@ -290,7 +290,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
         # Initialize the model using instance-specific variables
         instance.model = init_detector(instance.config, maskrcnn_checkpoint_file, device=dev)
-        instance.unet = ECGPredictor('resunet10', os.path.join(instance.work_dir,'segmentation_model.pth'), size=208, cbam=False)
+        instance.unet = ECGPredictor('resunet10', os.path.join(instance.work_dir,'segmentation/segmentation_model.pth'), size=208, cbam=False)
 
         if verbose:
             print(f"Model loaded from {maskrcnn_checkpoint_file}")
@@ -340,62 +340,63 @@ class OurDigitizationModel(AbstractDigitizationModel):
             print("Segmentation model training completed.")
 
     def train_model(self, data_folder, model_folder, verbose):
-        if verbose:
-            print('Training the digitization model...')
-            print('Finding the Challenge data...')
+        pass
+        # if verbose:
+        #     print('Training the digitization model...')
+        #     print('Finding the Challenge data...')
 
-        # Reduce the number of repeated compilations and improve
-        # training speed.
-        setup_cache_size_limit_of_dynamo()
+        # # Reduce the number of repeated compilations and improve
+        # # training speed.
+        # setup_cache_size_limit_of_dynamo()
         
-        # load config
-        base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
-        work_dir = os.path.join(base_dir, 'work_dir')
-        config_file_path = os.path.join(work_dir, 'maskrcnn_config.py')
-        cfg = Config.fromfile(config_file_path)
-        cfg.metainfo = {
-            'classes': ('ecg_lead', ),
-            'palette': [
-                (220, 20, 60),
-            ]
-        }
-        cfg.train_dataloader.dataset.ann_file = 'train/annotation_coco.json'
-        cfg.train_dataloader.dataset.data_root = cfg.data_root
-        cfg.train_dataloader.dataset.data_prefix.img = 'train/'
-        cfg.train_dataloader.dataset.metainfo = cfg.metainfo
+        # # load config
+        # base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
+        # work_dir = os.path.join(base_dir, 'work_dir')
+        # config_file_path = os.path.join(work_dir, 'maskrcnn_config.py')
+        # cfg = Config.fromfile(config_file_path)
+        # cfg.metainfo = {
+        #     'classes': ('ecg_lead', ),
+        #     'palette': [
+        #         (220, 20, 60),
+        #     ]
+        # }
+        # cfg.train_dataloader.dataset.ann_file = 'train/annotation_coco.json'
+        # cfg.train_dataloader.dataset.data_root = cfg.data_root
+        # cfg.train_dataloader.dataset.data_prefix.img = 'train/'
+        # cfg.train_dataloader.dataset.metainfo = cfg.metainfo
 
-        cfg.val_dataloader.dataset.ann_file = 'val/annotation_coco.json'
-        cfg.val_dataloader.dataset.data_root = cfg.data_root
-        cfg.val_dataloader.dataset.data_prefix.img = 'val/'
-        cfg.val_dataloader.dataset.metainfo = cfg.metainfo
+        # cfg.val_dataloader.dataset.ann_file = 'val/annotation_coco.json'
+        # cfg.val_dataloader.dataset.data_root = cfg.data_root
+        # cfg.val_dataloader.dataset.data_prefix.img = 'val/'
+        # cfg.val_dataloader.dataset.metainfo = cfg.metainfo
 
-        cfg.test_dataloader = cfg.val_dataloader
+        # cfg.test_dataloader = cfg.val_dataloader
 
-        # Modify metric config
-        cfg.val_evaluator.ann_file = cfg.data_root+'/'+'val/annotation_coco.json'
-        cfg.test_evaluator = cfg.val_evaluator
+        # # Modify metric config
+        # cfg.val_evaluator.ann_file = cfg.data_root+'/'+'val/annotation_coco.json'
+        # cfg.test_evaluator = cfg.val_evaluator
         
-        cfg.work_dir = os.path.join(model_folder, 'maskrcnn_config.py')
-        cfg.data_root = data_folder
-        assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
-        cfg.load_from = os.path.join(base_dir,'checkpoints', 'mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth')
+        # cfg.work_dir = os.path.join(model_folder, 'maskrcnn_config.py')
+        # cfg.data_root = data_folder
+        # assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
+        # cfg.load_from = os.path.join(base_dir,'checkpoints', 'mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth')
 
-        cfg.optim_wrapper.type = 'AmpOptimWrapper'
-        cfg.optim_wrapper.loss_scale = 'dynamic'
+        # cfg.optim_wrapper.type = 'AmpOptimWrapper'
+        # cfg.optim_wrapper.loss_scale = 'dynamic'
 
-        # Start the training in separate threads
-        detection_thread = threading.Thread(target=self.train_detection_model, args=(cfg, model_folder, verbose))
-        segmentation_thread = threading.Thread(target=self.train_segmentation_model, args=(data_folder, model_folder, work_dir, verbose))
+        # # Start the training in separate threads
+        # detection_thread = threading.Thread(target=self.train_detection_model, args=(cfg, model_folder, verbose))
+        # segmentation_thread = threading.Thread(target=self.train_segmentation_model, args=(data_folder, model_folder, work_dir, verbose))
         
-        detection_thread.start()
-        segmentation_thread.start()
+        # detection_thread.start()
+        # segmentation_thread.start()
 
-        # Wait for both threads to complete
-        detection_thread.join()
-        segmentation_thread.join()
+        # # Wait for both threads to complete
+        # detection_thread.join()
+        # segmentation_thread.join()
 
-        if verbose:
-            print("Both detection and segmentation models have been trained.")
+        # if verbose:
+        #     print("Both detection and segmentation models have been trained.")
         
         
 
