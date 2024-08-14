@@ -275,7 +275,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         verify_environment()
         work_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'work_dir')
         self.work_dir = work_dir
-        self.config = os.path.join(work_dir, "mask-rcnn_r50-caffe_fpn_ms-poly-3x_ecg.py")
+        self.config = os.path.join(work_dir, "maskrcnn_config.py")
         self.model = None
         self.unet = None
 

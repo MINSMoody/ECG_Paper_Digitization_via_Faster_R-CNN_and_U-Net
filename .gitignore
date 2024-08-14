@@ -2,6 +2,7 @@
 .vscode/
 __pycache__/
 output/
+TeamCode/src/outputs/
 TeamCode/tests/resources/example_output/*
 TeamCode/src/old_model/*
 TeamCode/tests/resources/test_data/*

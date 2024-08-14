@@ -2,7 +2,7 @@
     "segmentation": {
         "lr": 1e-4,
         "crop": 208,
-        "cbam": true,
+        "cbam": false,
         "n_epochs": 50,
         "batch_size": 32,
         "model": "resunet10",
