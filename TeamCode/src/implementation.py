@@ -618,7 +618,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         
         cfg.work_dir = os.path.join(model_folder, 'maskrcnn_config.py')
         cfg.data_root = data_folder
-        assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
+        # assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
         cfg.load_from = os.path.join(base_dir,'checkpoints', 'mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth')
 
         cfg.optim_wrapper.type = 'AmpOptimWrapper'

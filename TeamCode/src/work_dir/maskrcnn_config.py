@@ -31,7 +31,7 @@ model = dict(
         depth=50,
         frozen_stages=1,
         init_cfg=dict(
-            checkpoint='open-mmlab://detectron2/resnet50_caffe',
+            checkpoint='./TeamCode/src/checkpoints/resnet50_msra-5891d200.pth',
             type='Pretrained'),
         norm_cfg=dict(requires_grad=False, type='BN'),
         norm_eval=True,
