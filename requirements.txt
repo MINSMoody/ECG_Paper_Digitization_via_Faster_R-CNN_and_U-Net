@@ -4,3 +4,6 @@ pillow
 wfdb
 scikit-learn
 pycocotools
+imutils
+imaug
+qrcode

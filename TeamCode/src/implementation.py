@@ -23,6 +23,17 @@ from mmdet.apis import init_detector, inference_detector
 from helper_code import get_num_samples, get_signal_names, get_image_files
 from scipy import interpolate
 
+import os
+import random
+from TeamCode.src.ecg_image_generator.helper_functions import find_records
+from TeamCode.src.ecg_image_generator.gen_ecg_image_from_data import run_single_file
+import warnings
+import json
+from argparse import Namespace
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' 
+warnings.filterwarnings("ignore")
+
 device = os.environ.get("EXPECTEDDEVICE", "unspecified")
 if device == 'unspecified':
     print("Not running in a docker container")
@@ -269,6 +280,46 @@ def readOut(header_path, masks, bboxes, mV_pixel):
 
 
 
+def generate_data(data_folder, model_folder, verbose):
+    with open(os.path.join(model_folder, 'data_format.json'), 'r') as f:
+        args_dict = json.load(f)
+    args = Namespace(**args_dict)
+    random.seed(args.seed)
+    args.input_directory = data_folder
+    args.output_directory = data_folder
+    if os.path.isabs(args.input_directory) == False:
+        args.input_directory = os.path.normpath(os.path.join(os.getcwd(), args.input_directory))
+    if os.path.isabs(args.output_directory) == False:
+        original_output_dir = os.path.normpath(os.path.join(os.getcwd(), args.output_directory))
+    else:
+        original_output_dir = args.output_directory
+    
+    if os.path.exists(args.input_directory) == False or os.path.isdir(args.input_directory) == False:
+        raise Exception("The input directory does not exist, Please re-check the input arguments!")
+
+    if os.path.exists(original_output_dir) == False:
+        os.makedirs(original_output_dir)
+
+    i = 0
+    full_header_files, full_recording_files = find_records(args.input_directory, original_output_dir)
+    
+    for full_header_file, full_recording_file in zip(full_header_files, full_recording_files):
+        print(f"Processing {full_header_file}")
+        filename = full_recording_file
+        header = full_header_file
+        args.input_file = os.path.join(args.input_directory, filename)
+        args.header_file = os.path.join(args.input_directory, header)
+        args.start_index = -1
+        
+        folder_struct_list = full_header_file.split('/')[:-1]
+        args.output_directory = os.path.join(original_output_dir, '/'.join(folder_struct_list))
+        args.encoding = os.path.split(os.path.splitext(filename)[0])[1]
+        
+        i += run_single_file(args)
+        
+        if(args.max_num_images != -1 and i >= args.max_num_images):
+            break
+
     
 class OurDigitizationModel(AbstractDigitizationModel):
     def __init__(self):
@@ -340,7 +391,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
             print("Segmentation model training completed.")
 
     def train_model(self, data_folder, model_folder, verbose):
-        pass
+        generate_data(data_folder, model_folder, verbose)
         # if verbose:
         #     print('Training the digitization model...')
         #     print('Finding the Challenge data...')
