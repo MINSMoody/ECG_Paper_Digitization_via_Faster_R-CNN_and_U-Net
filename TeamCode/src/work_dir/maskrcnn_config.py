@@ -1,6 +1,6 @@
 auto_scale_lr = dict(base_batch_size=16, enable=False)
 backend_args = None
-data_root = '/scratch/hshang/DLECG_Data/data/00000'
+data_root = '/scratch/hshang/moody/train_set/00000'
 dataset_type = 'CocoDataset'
 default_hooks = dict(
     checkpoint=dict(interval=3, type='CheckpointHook'),
@@ -15,7 +15,7 @@ env_cfg = dict(
     dist_cfg=dict(backend='nccl'),
     mp_cfg=dict(mp_start_method='fork', opencv_num_threads=0))
 launcher = 'none'
-load_from = '/scratch/hshang/moody/mmdetection_MINS/checkpoints/mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth'
+load_from = '/scratch/hshang/moody/official-phase-mins-eth/TeamCode/src/checkpoints/mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth'
 log_level = 'INFO'
 log_processor = dict(by_epoch=True, type='LogProcessor', window_size=50)
 metainfo = dict(
@@ -31,7 +31,7 @@ model = dict(
         depth=50,
         frozen_stages=1,
         init_cfg=dict(
-            checkpoint='open-mmlab://detectron2/resnet50_caffe',
+            checkpoint='./TeamCode/src/checkpoints/resnet50_msra-5891d200.pth',
             type='Pretrained'),
         norm_cfg=dict(requires_grad=False, type='BN'),
         norm_eval=True,
@@ -104,14 +104,6 @@ model = dict(
             out_channels=256,
             roi_layer=dict(output_size=7, sampling_ratio=0, type='RoIAlign'),
             type='SingleRoIExtractor'),
-        mask_head=dict(
-            conv_out_channels=256,
-            in_channels=256,
-            loss_mask=dict(
-                loss_weight=10.0, type='CrossEntropyLoss', use_mask=True),
-            num_classes=1,
-            num_convs=8,
-            type='FCNMaskHead'),
         mask_roi_extractor=dict(
             featmap_strides=[
                 4,
@@ -120,7 +112,11 @@ model = dict(
                 32,
             ],
             out_channels=256,
-            roi_layer=dict(output_size=28, sampling_ratio=0, type='RoIAlign', aligned=True),
+            roi_layer=dict(
+                aligned=True,
+                output_size=28,
+                sampling_ratio=0,
+                type='RoIAlign'),
             type='SingleRoIExtractor'),
         type='StandardRoIHead'),
     rpn_head=dict(
@@ -216,8 +212,9 @@ model = dict(
             nms_pre=2000)),
     type='MaskRCNN')
 optim_wrapper = dict(
+    loss_scale='dynamic',
     optimizer=dict(lr=0.0025, momentum=0.9, type='SGD', weight_decay=0.0001),
-    type='OptimWrapper')
+    type='AmpOptimWrapper')
 param_scheduler = [
     dict(
         begin=0, by_epoch=False, end=500, start_factor=0.001, type='LinearLR'),
@@ -237,10 +234,10 @@ test_cfg = dict(type='TestLoop')
 test_dataloader = dict(
     batch_size=1,
     dataset=dict(
-        ann_file='val/annotation_coco.json',
+        ann_file='annotation_coco.json',
         backend_args=None,
         data_prefix=dict(img='val/'),
-        data_root='/scratch/hshang/DLECG_Data/data/00000',
+        data_root='TeamCode/tests/resources/example_data',
         metainfo=dict(classes=('ecg_lead', ), palette=[
             (
                 220,
@@ -276,12 +273,11 @@ test_dataloader = dict(
     persistent_workers=True,
     sampler=dict(shuffle=False, type='DefaultSampler'))
 test_evaluator = dict(
-    ann_file='/scratch/hshang/DLECG_Data/data/00000/val/annotation_coco.json',
+    ann_file='annotation_coco.json',
     backend_args=None,
     format_only=False,
     metric=[
         'bbox',
-        'segm',
     ],
     type='CocoMetric')
 test_pipeline = [
@@ -308,10 +304,10 @@ train_dataloader = dict(
     batch_sampler=dict(type='AspectRatioBatchSampler'),
     batch_size=2,
     dataset=dict(
-        ann_file='train/annotation_coco.json',
+        ann_file='annotation_coco.json',
         backend_args=None,
-        data_prefix=dict(img='train/'),
-        data_root='/scratch/hshang/DLECG_Data/data/00000',
+        data_prefix=dict(img=''),
+        data_root='/scratch/hshang/moody/train_set/00000',
         filter_cfg=dict(filter_empty_gt=True, min_size=32),
         metainfo=dict(classes=('ecg_lead', ), palette=[
             (
@@ -400,57 +396,9 @@ train_pipeline = [
     dict(prob=0.5, type='RandomFlip'),
     dict(type='PackDetInputs'),
 ]
-val_cfg = dict(type='ValLoop')
-val_dataloader = dict(
-    batch_size=1,
-    dataset=dict(
-        ann_file='val/annotation_coco.json',
-        backend_args=None,
-        data_prefix=dict(img='val/'),
-        data_root='/scratch/hshang/DLECG_Data/data/00000',
-        metainfo=dict(classes=('ecg_lead', ), palette=[
-            (
-                220,
-                20,
-                60,
-            ),
-        ]),
-        pipeline=[
-            dict(backend_args=None, type='LoadImageFromFile'),
-            dict(keep_ratio=True, scale=(
-                1333,
-                800,
-            ), type='Resize'),
-            dict(
-                poly2mask=True,
-                type='LoadAnnotations',
-                with_bbox=True,
-                with_mask=True),
-            dict(
-                meta_keys=(
-                    'img_id',
-                    'img_path',
-                    'ori_shape',
-                    'img_shape',
-                    'scale_factor',
-                ),
-                type='PackDetInputs'),
-        ],
-        test_mode=True,
-        type='CocoDataset'),
-    drop_last=False,
-    num_workers=2,
-    persistent_workers=True,
-    sampler=dict(shuffle=False, type='DefaultSampler'))
-val_evaluator = dict(
-    ann_file='/scratch/hshang/DLECG_Data/data/00000/val/annotation_coco.json',
-    backend_args=None,
-    format_only=False,
-    metric=[
-        'bbox',
-        'segm',
-    ],
-    type='CocoMetric')
+val_cfg = None
+val_dataloader = None
+val_evaluator = None
 vis_backends = [
     dict(type='LocalVisBackend'),
 ]
@@ -460,4 +408,4 @@ visualizer = dict(
     vis_backends=[
         dict(type='LocalVisBackend'),
     ])
-work_dir = '/scratch/hshang/moody/mmdetection_MINS/mask_combo_loss_higher_res'
+work_dir = '/scratch/hshang/moody/official-phase-mins-eth/TeamCode/src/work_dir'

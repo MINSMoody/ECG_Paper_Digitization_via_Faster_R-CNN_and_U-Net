@@ -6,6 +6,10 @@ from TeamCode.src.verify_environment import verify_environment
 import helper_code as hc
 import numpy as np
 import os
+import cv2
+
+
+from concurrent.futures import ThreadPoolExecutor
 
 import threading
 
@@ -24,13 +28,22 @@ from mmdet.apis import init_detector, inference_detector
 from helper_code import get_num_samples, get_signal_names, get_image_files
 from scipy import interpolate
 
-import os
 import random
 from TeamCode.src.ecg_image_generator.helper_functions import find_records
 from TeamCode.src.ecg_image_generator.gen_ecg_image_from_data import run_single_file
 import warnings
 import json
 from argparse import Namespace
+
+import os.path as osp
+import numpy as np
+from mmcv import imread, imwrite
+import mmengine
+from tqdm.auto import tqdm
+
+
+from pycocotools import mask as maskutils
+import random
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' 
 warnings.filterwarnings("ignore")
@@ -281,6 +294,20 @@ def readOut(header_path, masks, bboxes, mV_pixel):
 
 
 
+def process_single_file(full_header_file, full_recording_file, args, original_output_dir):
+    print(f"Processing {full_header_file}")
+    filename = full_recording_file
+    header = full_header_file
+    args.input_file = os.path.join(args.input_directory, filename)
+    args.header_file = os.path.join(args.input_directory, header)
+    args.start_index = -1
+
+    folder_struct_list = full_header_file.split('/')[:-1]
+    args.output_directory = os.path.join(original_output_dir, '/'.join(folder_struct_list))
+    args.encoding = os.path.split(os.path.splitext(filename)[0])[1]
+
+    return run_single_file(args)
+
 def generate_data(data_folder, model_folder, verbose):
     work_dir = our_paths.work_dir
     print(work_dir)
@@ -290,40 +317,196 @@ def generate_data(data_folder, model_folder, verbose):
     random.seed(args.seed)
     args.input_directory = data_folder
     args.output_directory = data_folder
-    if os.path.isabs(args.input_directory) == False:
+    if not os.path.isabs(args.input_directory):
         args.input_directory = os.path.normpath(os.path.join(os.getcwd(), args.input_directory))
-    if os.path.isabs(args.output_directory) == False:
+    if not os.path.isabs(args.output_directory):
         original_output_dir = os.path.normpath(os.path.join(os.getcwd(), args.output_directory))
     else:
         original_output_dir = args.output_directory
-    
-    if os.path.exists(args.input_directory) == False or os.path.isdir(args.input_directory) == False:
+
+    if not os.path.exists(args.input_directory) or not os.path.isdir(args.input_directory):
         raise Exception("The input directory does not exist, Please re-check the input arguments!")
 
-    if os.path.exists(original_output_dir) == False:
+    if not os.path.exists(original_output_dir):
         os.makedirs(original_output_dir)
 
     i = 0
     full_header_files, full_recording_files = find_records(args.input_directory, original_output_dir)
-    
-    for full_header_file, full_recording_file in zip(full_header_files, full_recording_files):
-        print(f"Processing {full_header_file}")
-        filename = full_recording_file
-        header = full_header_file
-        args.input_file = os.path.join(args.input_directory, filename)
-        args.header_file = os.path.join(args.input_directory, header)
-        args.start_index = -1
-        
-        folder_struct_list = full_header_file.split('/')[:-1]
-        args.output_directory = os.path.join(original_output_dir, '/'.join(folder_struct_list))
-        args.encoding = os.path.split(os.path.splitext(filename)[0])[1]
-        
-        i += run_single_file(args)
-        
-        if(args.max_num_images != -1 and i >= args.max_num_images):
-            break
 
-    
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for full_header_file, full_recording_file in zip(full_header_files, full_recording_files):
+            future = executor.submit(process_single_file, full_header_file, full_recording_file, args, original_output_dir)
+            futures.append(future)
+
+        for future in futures:
+            i += future.result()
+            if args.max_num_images != -1 and i >= args.max_num_images:
+                break
+
+def prepare_data_for_training(data_folder, model_folder=None, verbose=False):
+
+    def binary_mask_to_rle_np(binary_mask):
+        # Create a copy of the original mask
+        thickened_mask = np.copy(binary_mask)
+
+        # Use numpy slicing to mark pixels above and below the current mask
+        # thickened_mask[:-1, :] |= binary_mask[1:, :]  # Mark the pixel above
+        # thickened_mask[1:, :] |= binary_mask[:-1, :]  # Mark the pixel below
+        binary_mask = np.asfortranarray(thickened_mask.astype(np.uint8))
+        rle = {"counts": [], "size": list(binary_mask.shape)}
+        area = np.sum(binary_mask)
+        flattened_mask = binary_mask.ravel(order="F")
+        diff_arr = np.diff(flattened_mask)
+        nonzero_indices = np.where(diff_arr != 0)[0] + 1
+        lengths = np.diff(np.concatenate(([0], nonzero_indices, [len(flattened_mask)])))
+
+        # note that the odd counts are always the numbers of zeros
+        if flattened_mask[0] == 1:
+            lengths = np.concatenate(([0], lengths))
+
+        rle["counts"] = lengths.tolist()
+
+        return rle, area
+
+    def binary_mask_to_rle(binary_lead_mask):
+        """
+        Converts a mask to COCO's RLE format and calculates the area.
+
+        Parameters:
+        - lead_mask: 2D numpy array of the mask.
+        - threshold: The threshold to binarize the mask.
+
+        Returns:
+        - rle: Dictionary representing the run-length encoding in COCO format.
+        - area: Integer representing the area of the mask.
+        """
+
+
+        # Step 2: Encode the binary mask using maskutils
+        rle = maskutils.encode(np.asfortranarray(binary_lead_mask.astype(np.uint8)))
+        rle['counts'] = rle['counts'].decode('utf-8')
+        # Step 3: Calculate the area
+        area = maskutils.area(rle)
+
+        return rle, area
+
+
+    def convert_ecg_to_coco(data_path, bbox_dir, mask_dir, out_file):
+        # bbox_dir = osp.join(data_path, 'lead_bounding_box')
+        # mask_dir = osp.join(data_path, 'masks')  # Path to mask directory
+        annotations = []
+        images = []
+        obj_count = 0
+        img_crop_dir = osp.join(data_path, 'cropped_img')
+        os.makedirs(img_crop_dir, exist_ok=True)
+        mask_crop_dir = osp.join(data_path, 'cropped_masks')
+        os.makedirs(mask_crop_dir, exist_ok=True)
+        
+        for entry in tqdm(os.listdir(data_path), desc='Processing file'):
+            if entry.endswith(".png"):
+                img_name = entry[:-4]
+                bbox_path = osp.join(bbox_dir, f'{img_name}.json')
+                mask_path = osp.join(mask_dir, f'{img_name}.png')  
+                
+                
+                
+                mask = imread(mask_path, flag='grayscale')
+                image = imread(osp.join(data_path, entry), flag='unchanged')
+                
+                if mask is None:
+                    print(f"Failed to read mask for {mask_path}")
+                    continue
+
+                images.append(dict(
+                    id=int(entry[:5]),
+                    file_name=entry,
+                    height=image.shape[0],
+                    width=image.shape[1]))
+                
+                with open(bbox_path, 'r') as file:
+                    settings = json.load(file)
+                    
+                for lead in settings['leads']:
+                    coords = lead['lead_bounding_box']
+                    x_coords = [coord[1] for coord in coords.values()]
+                    y_coords = [coord[0] for coord in coords.values()]
+                    x_min, x_max = min(x_coords), max(x_coords)
+                    y_min, y_max = min(y_coords), max(y_coords)
+                
+                    # Extract the sub-region from the mask
+                    lead_mask = mask[y_min:y_max, x_min:x_max]
+                    # prepare the lead crop for segmentation model
+                    lead_crop = image[y_min:y_max, x_min:x_max]
+                    
+                    save_crop = np.random.choice([True, False], p=[0.1, 0.9])
+                    
+                    if save_crop:
+                        imwrite(lead_crop, osp.join(img_crop_dir, f'{obj_count}.png'))
+                        imwrite(lead_mask, osp.join(mask_crop_dir, f'{obj_count}.png'))
+                    
+                    
+
+                    # Apply threshold to create a binary mask
+                    binary_mask = lead_mask > 0
+                    # plt.imshow(binary_mask)
+
+                    # Prepare a full-size binary mask for visualization
+                    full_binary_mask = np.zeros_like(mask, dtype=bool)
+                    full_binary_mask[y_min:y_max, x_min:x_max] = binary_mask
+                    
+                    
+                    rle, area = binary_mask_to_rle_np(full_binary_mask)
+
+                    
+                    data_anno = dict(
+                        image_id=int(entry[:5]),
+                        id=obj_count,
+                        category_id=0,
+                        bbox=[x_min, y_min, x_max - x_min, y_max-y_min],
+                        area=area,
+                        iscrowd=0,
+                        segmentation=rle
+                    )
+                    
+                    annotations.append(data_anno)
+                    obj_count += 1
+
+        coco_format_json = dict(
+            images=images,
+            annotations=annotations,
+            categories=[{'id': 0, 'name': 'ecg_lead'}])
+        mmengine.dump(coco_format_json, out_file)
+    convert_ecg_to_coco(
+    data_folder,
+    data_folder,
+    os.path.join(data_folder,'masks'),
+    os.path.join(data_folder, 'annotation_coco.json'))
+
+def remove_image_gradients(image_array):
+    print("Removing gradients from image")
+   # Step 2: Split the image into R, G, B channels
+    if image_array.shape[2] == 4:
+        b_channel, g_channel, r_channel, a_channel = cv2.split(image_array)
+    elif image_array.shape[2] == 3:
+        b_channel, g_channel, r_channel = cv2.split(image_array)
+        a_channel = np.ones_like(b_channel) * 255
+    else: return image_array
+
+    # Step 3: Apply Laplacian filter to each channel
+    laplacian_b = cv2.Laplacian(b_channel, cv2.CV_64F)
+    laplacian_g = cv2.Laplacian(g_channel, cv2.CV_64F)
+    laplacian_r = cv2.Laplacian(r_channel, cv2.CV_64F)
+
+    # Convert the result back to uint8 (8-bit image) because Laplacian can result in negative values
+    laplacian_b = cv2.convertScaleAbs(laplacian_b)
+    laplacian_g = cv2.convertScaleAbs(laplacian_g)
+    laplacian_r = cv2.convertScaleAbs(laplacian_r)
+
+    # Step 4: Merge the channels back together
+    laplacian_rgb = cv2.merge((laplacian_b, laplacian_g, laplacian_r))
+    return laplacian_rgb
+
 class OurDigitizationModel(AbstractDigitizationModel):
     def __init__(self):
         verify_environment()
@@ -394,63 +577,71 @@ class OurDigitizationModel(AbstractDigitizationModel):
             print("Segmentation model training completed.")
 
     def train_model(self, data_folder, model_folder, verbose):
-        generate_data(data_folder, model_folder, verbose)
-        # if verbose:
-        #     print('Training the digitization model...')
-        #     print('Finding the Challenge data...')
+        # generate_data(data_folder, model_folder, verbose)
+        # prepare_data_for_training(data_folder, model_folder, verbose)
+        if verbose:
+            print('Training the digitization model...')
+            print('Finding the Challenge data...')
 
-        # # Reduce the number of repeated compilations and improve
-        # # training speed.
-        # setup_cache_size_limit_of_dynamo()
+        # Reduce the number of repeated compilations and improve
+        # training speed.
+        setup_cache_size_limit_of_dynamo()
         
-        # # load config
-        # base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
-        # work_dir = os.path.join(base_dir, 'work_dir')
-        # config_file_path = os.path.join(work_dir, 'maskrcnn_config.py')
-        # cfg = Config.fromfile(config_file_path)
-        # cfg.metainfo = {
-        #     'classes': ('ecg_lead', ),
-        #     'palette': [
-        #         (220, 20, 60),
-        #     ]
-        # }
-        # cfg.train_dataloader.dataset.ann_file = 'train/annotation_coco.json'
-        # cfg.train_dataloader.dataset.data_root = cfg.data_root
-        # cfg.train_dataloader.dataset.data_prefix.img = 'train/'
-        # cfg.train_dataloader.dataset.metainfo = cfg.metainfo
+        # load config
+        base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
+        work_dir = os.path.join(base_dir, 'work_dir')
+        config_file_path = os.path.join(work_dir, 'maskrcnn_config.py')
+        cfg = Config.fromfile(config_file_path)
+        cfg.metainfo = {
+            'classes': ('ecg_lead', ),
+            'palette': [
+                (220, 20, 60),
+            ]
+        }
+        cfg.data_root = data_folder
+        cfg.train_dataloader.dataset.ann_file = 'annotation_coco.json'
+        cfg.train_dataloader.dataset.data_root = cfg.data_root
+        cfg.train_dataloader.dataset.data_prefix.img = ''
+        cfg.train_dataloader.dataset.metainfo = cfg.metainfo
 
         # cfg.val_dataloader.dataset.ann_file = 'val/annotation_coco.json'
         # cfg.val_dataloader.dataset.data_root = cfg.data_root
         # cfg.val_dataloader.dataset.data_prefix.img = 'val/'
         # cfg.val_dataloader.dataset.metainfo = cfg.metainfo
+        
+        cfg.val_cfg = None
+        cfg.val_dataloader = None
 
         # cfg.test_dataloader = cfg.val_dataloader
 
-        # # Modify metric config
+        # Modify metric config
         # cfg.val_evaluator.ann_file = cfg.data_root+'/'+'val/annotation_coco.json'
+        cfg.val_evaluator = None
         # cfg.test_evaluator = cfg.val_evaluator
         
-        # cfg.work_dir = os.path.join(model_folder, 'maskrcnn_config.py')
-        # cfg.data_root = data_folder
+        cfg.work_dir = os.path.join(model_folder, 'maskrcnn_config.py')
+        cfg.data_root = data_folder
         # assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
-        # cfg.load_from = os.path.join(base_dir,'checkpoints', 'mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth')
+        cfg.load_from = os.path.join(base_dir,'checkpoints', 'mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth')
 
-        # cfg.optim_wrapper.type = 'AmpOptimWrapper'
-        # cfg.optim_wrapper.loss_scale = 'dynamic'
-
-        # # Start the training in separate threads
-        # detection_thread = threading.Thread(target=self.train_detection_model, args=(cfg, model_folder, verbose))
-        # segmentation_thread = threading.Thread(target=self.train_segmentation_model, args=(data_folder, model_folder, work_dir, verbose))
+        cfg.optim_wrapper.type = 'AmpOptimWrapper'
+        cfg.optim_wrapper.loss_scale = 'dynamic'
         
-        # detection_thread.start()
-        # segmentation_thread.start()
+        
 
-        # # Wait for both threads to complete
-        # detection_thread.join()
-        # segmentation_thread.join()
+        # Start the training in separate threads
+        detection_thread = threading.Thread(target=self.train_detection_model, args=(cfg, model_folder, verbose))
+        segmentation_thread = threading.Thread(target=self.train_segmentation_model, args=(data_folder, model_folder, work_dir, verbose))
+        
+        detection_thread.start()
+        segmentation_thread.start()
 
-        # if verbose:
-        #     print("Both detection and segmentation models have been trained.")
+        # Wait for both threads to complete
+        detection_thread.join()
+        segmentation_thread.join()
+
+        if verbose:
+            print("Both detection and segmentation models have been trained.")
         
         
 
@@ -475,11 +666,16 @@ class OurDigitizationModel(AbstractDigitizationModel):
         # print(f"Processing image: {img_path}")
 
         img = mmcv.imread(img_path,channel_order='rgb')
+        # remove image gradient
+        img = remove_image_gradients(img)
         result = inference_detector(self.model, img)
         result_dict = result.to_dict()
         pred = result_dict['pred_instances']
         bboxes = pred['bboxes'].to(torch.int).cpu().detach().numpy()
-        masks = pred['masks'].cpu().detach().numpy()
+        # check if pred has masks 
+        masks = np.zeros((bboxes.shape[0], img.shape[0], img.shape[1]))
+        if 'masks' in pred:
+            masks = pred['masks'].cpu().detach().numpy()
         scores = pred['scores'].cpu().detach().numpy()
         labels = pred['labels'].cpu().detach().numpy()
         

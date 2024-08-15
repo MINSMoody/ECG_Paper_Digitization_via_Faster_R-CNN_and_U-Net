@@ -73,7 +73,7 @@ def generate_template(header_file):
             attributes['DOB'] = 'DOB: ' + attributes['DOB'] 
             if 'Age' in attributes.keys():
                 attributes['DOB'] += '(Age: ' + attributes['Age'] + ' yrs)'
-        else:
+        elif 'Age' in attributes.keys():
             attributes['DOB'] = 'Age: ' + attributes['Age'] + ' yrs'
 
         if attributes['Weight'] != '':
