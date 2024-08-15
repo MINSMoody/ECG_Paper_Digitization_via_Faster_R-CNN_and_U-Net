@@ -21,7 +21,7 @@
     "num_creases_vertically": 10,
     "num_creases_horizontally": 10,
     "rotate": 0,
-    "noise": 10,
+    "noise": 8,
     "crop": 0.01,
     "temperature": 40000,
     "random_resolution": false,
