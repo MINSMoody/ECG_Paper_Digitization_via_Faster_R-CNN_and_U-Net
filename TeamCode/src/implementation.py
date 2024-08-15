@@ -1,5 +1,6 @@
 
 
+from TeamCode.src import our_paths
 from TeamCode.src.interface import AbstractDigitizationModel, AbstractClassificationModel
 from TeamCode.src.verify_environment import verify_environment
 import helper_code as hc
@@ -281,7 +282,9 @@ def readOut(header_path, masks, bboxes, mV_pixel):
 
 
 def generate_data(data_folder, model_folder, verbose):
-    with open(os.path.join(model_folder, 'data_format.json'), 'r') as f:
+    work_dir = our_paths.work_dir
+    print(work_dir)
+    with open(os.path.join(work_dir, 'data_format.json'), 'r') as f:
         args_dict = json.load(f)
     args = Namespace(**args_dict)
     random.seed(args.seed)

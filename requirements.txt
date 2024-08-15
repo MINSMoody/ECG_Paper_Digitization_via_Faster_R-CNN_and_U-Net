@@ -5,5 +5,5 @@ wfdb
 scikit-learn
 pycocotools
 imutils
-imaug
+imgaug
 qrcode
