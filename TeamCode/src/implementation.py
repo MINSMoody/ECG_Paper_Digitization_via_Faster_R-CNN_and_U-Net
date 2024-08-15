@@ -577,8 +577,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
             print("Segmentation model training completed.")
 
     def train_model(self, data_folder, model_folder, verbose):
-        # generate_data(data_folder, model_folder, verbose)
-        # prepare_data_for_training(data_folder, model_folder, verbose)
+        generate_data(data_folder, model_folder, verbose)
+        prepare_data_for_training(data_folder, model_folder, verbose)
         if verbose:
             print('Training the digitization model...')
             print('Finding the Challenge data...')
