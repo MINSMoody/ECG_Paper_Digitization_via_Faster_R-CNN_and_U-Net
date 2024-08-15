@@ -17,3 +17,5 @@ TeamCode/src/work_dir/model_cbam.pth
 TeamCode/src/work_dir/epoch_3.pth
 TeamCode/src/work_dir/epoch_6.pth
 TeamCode/src/work_dir/epoch_9.pth
+TeamCode/tests/resources/example_data/*.json
+TeamCode/tests/resources/example_data/masks/
