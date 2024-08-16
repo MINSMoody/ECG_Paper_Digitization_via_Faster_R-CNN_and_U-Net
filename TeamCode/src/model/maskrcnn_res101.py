@@ -15,7 +15,7 @@ env_cfg = dict(
     dist_cfg=dict(backend='nccl'),
     mp_cfg=dict(mp_start_method='fork', opencv_num_threads=0))
 launcher = 'none'
-load_from = '/scratch/hshang/moody/official-phase-mins-eth/TeamCode/src/checkpoints/mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth'
+load_from = '/scratch/hshang/moody/final_phase_submission/official-phase-mins-eth/TeamCode/src/checkpoints/mask_rcnn_r101_caffe_fpn_1x_coco_20200601_095758-805e06c1.pth'
 log_level = 'INFO'
 log_processor = dict(by_epoch=True, type='LogProcessor', window_size=50)
 metainfo = dict(
@@ -28,10 +28,10 @@ metainfo = dict(
     ])
 model = dict(
     backbone=dict(
-        depth=50,
+        depth=101,
         frozen_stages=1,
         init_cfg=dict(
-            checkpoint='./TeamCode/src/checkpoints/resnet50_msra-5891d200.pth',
+            checkpoint='TeamCode/src/checkpoints/resnet101_msra-6cc46731.pth',
             type='Pretrained'),
         norm_cfg=dict(requires_grad=False, type='BN'),
         norm_eval=True,
@@ -104,20 +104,6 @@ model = dict(
             out_channels=256,
             roi_layer=dict(output_size=7, sampling_ratio=0, type='RoIAlign'),
             type='SingleRoIExtractor'),
-        mask_roi_extractor=dict(
-            featmap_strides=[
-                4,
-                8,
-                16,
-                32,
-            ],
-            out_channels=256,
-            roi_layer=dict(
-                aligned=True,
-                output_size=28,
-                sampling_ratio=0,
-                type='RoIAlign'),
-            type='SingleRoIExtractor'),
         type='StandardRoIHead'),
     rpn_head=dict(
         anchor_generator=dict(
@@ -166,27 +152,27 @@ model = dict(
             nms=dict(iou_threshold=0.5, type='nms'),
             score_thr=0.05),
         rpn=dict(
-            max_per_img=1000,
+            max_per_img=100,
             min_bbox_size=0,
             nms=dict(iou_threshold=0.7, type='nms'),
-            nms_pre=1000)),
+            nms_pre=500)),
     train_cfg=dict(
         rcnn=dict(
             assigner=dict(
                 ignore_iof_thr=-1,
                 match_low_quality=True,
-                min_pos_iou=0.5,
-                neg_iou_thr=0.5,
-                pos_iou_thr=0.5,
+                min_pos_iou=0.7,
+                neg_iou_thr=0.7,
+                pos_iou_thr=0.3,
                 type='MaxIoUAssigner'),
             debug=False,
-            mask_size=56,
+            mask_size=70,
             pos_weight=-1,
             sampler=dict(
                 add_gt_as_proposals=True,
                 neg_pos_ub=-1,
                 num=512,
-                pos_fraction=0.25,
+                pos_fraction=0.5,
                 type='RandomSampler')),
         rpn=dict(
             allowed_border=-1,
@@ -206,10 +192,10 @@ model = dict(
                 pos_fraction=0.5,
                 type='RandomSampler')),
         rpn_proposal=dict(
-            max_per_img=1000,
+            max_per_img=100,
             min_bbox_size=0,
             nms=dict(iou_threshold=0.7, type='nms'),
-            nms_pre=2000)),
+            nms_pre=500)),
     type='MaskRCNN')
 optim_wrapper = dict(
     loss_scale='dynamic',
@@ -236,8 +222,8 @@ test_dataloader = dict(
     dataset=dict(
         ann_file='annotation_coco.json',
         backend_args=None,
-        data_prefix=dict(img='val/'),
-        data_root='TeamCode/tests/resources/example_data',
+        data_prefix=dict(img=''),
+        data_root='/scratch/hshang/moody/train_set/00000',
         metainfo=dict(classes=('ecg_lead', ), palette=[
             (
                 220,
@@ -273,11 +259,12 @@ test_dataloader = dict(
     persistent_workers=True,
     sampler=dict(shuffle=False, type='DefaultSampler'))
 test_evaluator = dict(
-    ann_file='annotation_coco.json',
+    ann_file='/scratch/hshang/moody/train_set/00000/annotation_coco.json',
     backend_args=None,
     format_only=False,
     metric=[
         'bbox',
+        'segm',
     ],
     type='CocoMetric')
 test_pipeline = [
@@ -302,7 +289,7 @@ test_pipeline = [
 train_cfg = dict(max_epochs=12, type='EpochBasedTrainLoop', val_interval=3)
 train_dataloader = dict(
     batch_sampler=dict(type='AspectRatioBatchSampler'),
-    batch_size=2,
+    batch_size=1,
     dataset=dict(
         ann_file='annotation_coco.json',
         backend_args=None,
@@ -408,4 +395,4 @@ visualizer = dict(
     vis_backends=[
         dict(type='LocalVisBackend'),
     ])
-work_dir = '/scratch/hshang/moody/official-phase-mins-eth/TeamCode/src/work_dir'
+work_dir = '/scratch/hshang/moody/final_phase_submission/official-phase-mins-eth/TeamCode/src/model'

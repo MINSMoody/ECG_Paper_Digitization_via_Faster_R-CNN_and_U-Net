@@ -11,7 +11,8 @@ import cv2
 
 from concurrent.futures import ThreadPoolExecutor
 
-import threading
+# import threading
+import multiprocessing
 
 import torch
 import warnings
@@ -153,16 +154,42 @@ def bboxes_sorting_12(bboxes, masks):
     idx = col1+col2+col3+col4
     masks = masks[idx]
     bboxes = bboxes[idx]
+    ### now assign values row by row
+    rowl = np.median(bboxes[0:3,0])
+    rowr = np.median(bboxes[9:12,2])
+    leadwidth = (rowr - rowl)/4
+    bboxes[0,0] =  rowl
+    bboxes[1,0] =  rowl
+    bboxes[2,0] =  rowl
+    bboxes[0,2] = rowl+leadwidth
+    bboxes[1,2] = rowl+leadwidth
+    bboxes[2,2] = rowl+leadwidth
+    bboxes[3,0] = rowl+leadwidth
+    bboxes[4,0] = rowl+leadwidth
+    bboxes[5,0] = rowl+leadwidth
+    bboxes[3,2] = rowl+leadwidth*2
+    bboxes[4,2] = rowl+leadwidth*2
+    bboxes[5,2] = rowl+leadwidth*2
+    bboxes[6,0] = rowl+leadwidth*2
+    bboxes[7,0] = rowl+leadwidth*2
+    bboxes[8,0] = rowl+leadwidth*2
+    bboxes[6,2] = rowl+leadwidth*3
+    bboxes[7,2] = rowl+leadwidth*3
+    bboxes[8,2] = rowl+leadwidth*3
+    bboxes[9,0] = rowl+leadwidth*3
+    bboxes[10,0] = rowl+leadwidth*3
+    bboxes[11,0] = rowl+leadwidth*3
+    bboxes[9,2] = rowr
+    bboxes[10,2] = rowr
+    bboxes[11,2] = rowr
     return bboxes, masks
 
 
 
 def bboxes_sorting_13(bboxes, masks):
-
     bboxes_avg_H = list((bboxes[:,1]+bboxes[:,3])/2)
     bboxes_avg_W = list((bboxes[:,0]+bboxes[:,2])/2)
     bboxes_avg = np.array([bboxes_avg_H, bboxes_avg_W]).transpose()
-    
     sortH_idx = bboxes_avg[:, 0].argsort()
     #first take the long leads and 3x4
     mask_last = masks[sortH_idx[12]]
@@ -170,7 +197,6 @@ def bboxes_sorting_13(bboxes, masks):
     bboxes_avg = bboxes_avg[sortH_idx[0:12]]
     masks = masks[sortH_idx[0:12]]
     bboxes = bboxes[sortH_idx[0:12]]
-    
     #then sort by W
     sortW_idx = bboxes_avg[:, 1].argsort()
     bboxes_avg = bboxes_avg[sortW_idx]
@@ -187,6 +213,35 @@ def bboxes_sorting_13(bboxes, masks):
     masks[1] = mask_last
     # bboxes = np.append(bboxes, bbox_last.reshape((1,-1)), axis=0)
     # masks = np.append(masks, mask_last.reshape((1,mask_last.shape[0],mask_last.shape[1])), axis=0)
+    # now manually assign the values
+    rowl = np.median(bboxes[0:3,0])
+    rowr = np.median(bboxes[9:12,2])
+    leadwidth = (rowr - rowl)/4
+    bboxes[0,0] =  rowl
+    bboxes[1,0] =  rowl
+    bboxes[2,0] =  rowl
+    bboxes[0,2] = rowl+leadwidth
+    #bboxes[1,2] = rowl+leadwidth
+    bboxes[2,2] = rowl+leadwidth
+    bboxes[3,0] = rowl+leadwidth
+    bboxes[4,0] = rowl+leadwidth
+    bboxes[5,0] = rowl+leadwidth
+    bboxes[3,2] = rowl+leadwidth*2
+    bboxes[4,2] = rowl+leadwidth*2
+    bboxes[5,2] = rowl+leadwidth*2
+    bboxes[6,0] = rowl+leadwidth*2
+    bboxes[7,0] = rowl+leadwidth*2
+    bboxes[8,0] = rowl+leadwidth*2
+    bboxes[6,2] = rowl+leadwidth*3
+    bboxes[7,2] = rowl+leadwidth*3
+    bboxes[8,2] = rowl+leadwidth*3
+    bboxes[9,0] = rowl+leadwidth*3
+    bboxes[10,0] = rowl+leadwidth*3
+    bboxes[11,0] = rowl+leadwidth*3
+    bboxes[9,2] = rowr
+    bboxes[10,2] = rowr
+    bboxes[11,2] = rowr
+    bboxes[1,2] = rowr if bboxes[1,2] < rowr else bboxes[1,2]
     return bboxes, masks
 
 
@@ -230,7 +285,7 @@ def crop_from_bbox(bbox, mask, mV_pixel):
 
 
 def readOut(header_path, masks, bboxes, mV_pixel):
-    bboxes = bboxes.astype(int)
+    # bboxes = bboxes.astype(int)
     # print(bboxes.shape[0])
     
 
@@ -309,9 +364,7 @@ def process_single_file(full_header_file, full_recording_file, args, original_ou
     return run_single_file(args)
 
 def generate_data(data_folder, model_folder, verbose):
-    work_dir = our_paths.work_dir
-    print(work_dir)
-    with open(os.path.join(work_dir, 'data_format.json'), 'r') as f:
+    with open(os.path.join(model_folder, 'data_format.json'), 'r') as f:
         args_dict = json.load(f)
     args = Namespace(**args_dict)
     random.seed(args.seed)
@@ -484,7 +537,6 @@ def prepare_data_for_training(data_folder, model_folder=None, verbose=False):
     os.path.join(data_folder, 'annotation_coco.json'))
 
 def remove_image_gradients(image_array):
-    print("Removing gradients from image")
    # Step 2: Split the image into R, G, B channels
     if image_array.shape[2] == 4:
         b_channel, g_channel, r_channel, a_channel = cv2.split(image_array)
@@ -510,9 +562,9 @@ def remove_image_gradients(image_array):
 class OurDigitizationModel(AbstractDigitizationModel):
     def __init__(self):
         verify_environment()
-        work_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'work_dir')
-        self.work_dir = work_dir
-        self.config = os.path.join(work_dir, "maskrcnn_config.py")
+        # work_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'work_dir')
+        # self.work_dir = None#work_dir
+        self.config = None#os.path.join(work_dir, "maskrcnn_res101.py")
         self.model = None
         self.unet = None
 
@@ -521,13 +573,14 @@ class OurDigitizationModel(AbstractDigitizationModel):
     def from_folder(cls, model_folder, verbose):
          # Create an instance of the class
         instance = cls()
-
+        # instance.work_dir = model_folder
+        instance.config = os.path.join(model_folder, "maskrcnn_res101.py")
         # Construct checkpoint path based on the model_folder parameter
-        maskrcnn_checkpoint_file = os.path.join(instance.work_dir, 'epoch_12.pth')
+        maskrcnn_checkpoint_file = os.path.join(model_folder, 'epoch_12.pth')
 
         # Initialize the model using instance-specific variables
         instance.model = init_detector(instance.config, maskrcnn_checkpoint_file, device=dev)
-        instance.unet = ECGPredictor('resunet10', os.path.join(instance.work_dir,'segmentation/segmentation_model.pth'), size=208, cbam=False)
+        instance.unet = ECGPredictor('resunet10', os.path.join(model_folder,'segmentation/segmentation_model.pth'), size=208, cbam=False)
 
         if verbose:
             print(f"Model loaded from {maskrcnn_checkpoint_file}")
@@ -554,11 +607,11 @@ class OurDigitizationModel(AbstractDigitizationModel):
         if verbose:
             print("Detection model training completed.")
 
-    def train_segmentation_model(self, data_folder, model_folder, work_dir, verbose):
+    def train_segmentation_model(self, data_folder, model_folder, verbose):
         if verbose:
             print("Training segmentation model...")
         
-        param_file = os.path.join(work_dir, 'ecg_params.json')
+        param_file = os.path.join(model_folder, 'ecg_params.json')
         param_set = "segmentation"
         unet_data_dir = os.path.join(data_folder, 'cropped_img')
         ecg = ECGSegment(
@@ -570,13 +623,14 @@ class OurDigitizationModel(AbstractDigitizationModel):
             models_dir=model_folder,
             cv=5,
             resume_training=True,
-            checkpoint_path=os.path.join(work_dir, 'segmentation_base_model.pth')
+            checkpoint_path=os.path.join(model_folder, 'segmentation_base_model.pth')
         )
         
         if verbose:
             print("Segmentation model training completed.")
 
     def train_model(self, data_folder, model_folder, verbose):
+        multiprocessing.set_start_method('spawn')
         generate_data(data_folder, model_folder, verbose)
         prepare_data_for_training(data_folder, model_folder, verbose)
         if verbose:
@@ -589,8 +643,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
         
         # load config
         base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
-        work_dir = os.path.join(base_dir, 'work_dir')
-        config_file_path = os.path.join(work_dir, 'maskrcnn_config.py')
+        # work_dir = os.path.join(base_dir, 'work_dir')
+        config_file_path = os.path.join(model_folder, 'maskrcnn_res101.py')
         cfg = Config.fromfile(config_file_path)
         cfg.metainfo = {
             'classes': ('ecg_lead', ),
@@ -619,10 +673,10 @@ class OurDigitizationModel(AbstractDigitizationModel):
         cfg.val_evaluator = None
         # cfg.test_evaluator = cfg.val_evaluator
         
-        cfg.work_dir = os.path.join(model_folder, 'maskrcnn_config.py')
+        cfg.work_dir = os.path.join(model_folder, 'maskrcnn_res101.py')
         cfg.data_root = data_folder
         # assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
-        cfg.load_from = os.path.join(base_dir,'checkpoints', 'mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth')
+        cfg.load_from = os.path.join(base_dir,'checkpoints', 'mask_rcnn_r101_caffe_fpn_1x_coco_20200601_095758-805e06c1.pth')
 
         cfg.optim_wrapper.type = 'AmpOptimWrapper'
         cfg.optim_wrapper.loss_scale = 'dynamic'
@@ -630,9 +684,9 @@ class OurDigitizationModel(AbstractDigitizationModel):
         
 
         # Start the training in separate threads
-        detection_thread = threading.Thread(target=self.train_detection_model, args=(cfg, model_folder, verbose))
-        segmentation_thread = threading.Thread(target=self.train_segmentation_model, args=(data_folder, model_folder, work_dir, verbose))
-        
+        detection_thread = multiprocessing.Process(target=self.train_detection_model, args=(cfg, model_folder, verbose))
+        segmentation_thread = multiprocessing.Process(target=self.train_segmentation_model, args=(data_folder, model_folder, verbose))
+    
         detection_thread.start()
         segmentation_thread.start()
 
@@ -709,10 +763,11 @@ class OurDigitizationModel(AbstractDigitizationModel):
         #     empty_masks = np.zeros((13 - masks.shape[0], masks.shape[1], masks.shape[2]))
         #     masks = np.append(masks, empty_masks, axis=0)
         # to_be_readout = to_be_readout + masks
+        
         mV_pixel = (25.4 *8.5*0.5)/(masks[0].shape[0]*5) #hardcoded for now
-        # mV_pixel = (1.5*25.4 *8.5*0.5)/(masks[0].shape[0]*5)
+        # # mV_pixel = (1.5*25.4 *8.5*0.5)/(masks[0].shape[0]*5)
         header_path = hc.get_header_file(record)
-        # load gt masks for debuging:
+        # # load gt masks for debuging:
         # directory_path = os.path.dirname(img_path)
         # img_name = os.path.splitext(os.path.basename(img_path))[0]
         # mask_path = os.path.join(directory_path, img_name + '_mask.png')
@@ -725,6 +780,17 @@ class OurDigitizationModel(AbstractDigitizationModel):
         #     # mmcv.imwrite(gt_mask, 'gt_mask.png')
         #     gt_masks.append(gt_mask)
         # gt_masks = np.array(gt_masks)
+        
+        # bbox_path = mask_path = os.path.join(directory_path, img_name + '.json')
+        # with open(bbox_path, 'r') as file:
+        #     settings = json.load(file)
+        # for lead in settings['leads']:
+        #     coords = lead['lead_bounding_box']
+        #     x_coords = [coord[1] for coord in coords.values()]
+        #     y_coords = [coord[0] for coord in coords.values()]
+        #     x_min, x_max = min(x_coords), max(x_coords)
+        #     y_min, y_max = min(y_coords), max(y_coords)
+            
         
         # assert gt_masks.shape == to_be_readout.shape, f"Expected shape {to_be_readout.shape}, got {gt_masks.shape}"
         # signal=readOut(header_path, masks, bboxes, mV_pixel)

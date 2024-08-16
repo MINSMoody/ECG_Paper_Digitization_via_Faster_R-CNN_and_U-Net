@@ -28,7 +28,7 @@
     "random_padding": false,
     "random_grid_color": false,
     "standard_grid_color": 5,
-    "calibration_pulse": 0.2,
+    "calibration_pulse": 0,
     "random_grid_present": 1.0,
     "random_print_header": 0.7,
     "random_bw": 0.4,

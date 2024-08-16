@@ -19,3 +19,6 @@ TeamCode/src/work_dir/epoch_6.pth
 TeamCode/src/work_dir/epoch_9.pth
 TeamCode/tests/resources/example_data/*.json
 TeamCode/tests/resources/example_data/masks/
+TeamCode/src/model/2024*/
+TeamCode/tests/resources/example_data/cropped_img/
+TeamCode/tests/resources/example_data/cropped_masks/
