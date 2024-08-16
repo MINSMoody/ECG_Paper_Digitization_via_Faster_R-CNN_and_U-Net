@@ -15,7 +15,7 @@ env_cfg = dict(
     dist_cfg=dict(backend='nccl'),
     mp_cfg=dict(mp_start_method='fork', opencv_num_threads=0))
 launcher = 'none'
-load_from = '/scratch/hshang/moody/mmdetection_MINS/checkpoints/mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth'
+load_from = '/scratch/hshang/moody/final_phase_submission/official-phase-mins-eth/TeamCode/src/checkpoints/mask_rcnn_r101_caffe_fpn_1x_coco_20200601_095758-805e06c1.pth'
 log_level = 'INFO'
 log_processor = dict(by_epoch=True, type='LogProcessor', window_size=50)
 metainfo = dict(
@@ -31,7 +31,7 @@ model = dict(
         depth=101,
         frozen_stages=1,
         init_cfg=dict(
-            checkpoint='open-mmlab://detectron2/resnet101_caffe',
+            checkpoint='TeamCode/src/checkpoints/resnet101_msra-6cc46731.pth',
             type='Pretrained'),
         norm_cfg=dict(requires_grad=False, type='BN'),
         norm_eval=True,
@@ -198,8 +198,9 @@ model = dict(
             nms_pre=500)),
     type='MaskRCNN')
 optim_wrapper = dict(
+    loss_scale='dynamic',
     optimizer=dict(lr=0.0025, momentum=0.9, type='SGD', weight_decay=0.0001),
-    type='OptimWrapper')
+    type='AmpOptimWrapper')
 param_scheduler = [
     dict(
         begin=0, by_epoch=False, end=500, start_factor=0.001, type='LinearLR'),
@@ -394,4 +395,4 @@ visualizer = dict(
     vis_backends=[
         dict(type='LocalVisBackend'),
     ])
-work_dir = '/scratch/hshang/moody/mmdetection_MINS/maskrcnn_res101'
+work_dir = '/scratch/hshang/moody/final_phase_submission/official-phase-mins-eth/TeamCode/src/model'

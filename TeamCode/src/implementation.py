@@ -364,9 +364,7 @@ def process_single_file(full_header_file, full_recording_file, args, original_ou
     return run_single_file(args)
 
 def generate_data(data_folder, model_folder, verbose):
-    work_dir = our_paths.work_dir
-    print(work_dir)
-    with open(os.path.join(work_dir, 'data_format.json'), 'r') as f:
+    with open(os.path.join(model_folder, 'data_format.json'), 'r') as f:
         args_dict = json.load(f)
     args = Namespace(**args_dict)
     random.seed(args.seed)
@@ -564,8 +562,8 @@ def remove_image_gradients(image_array):
 class OurDigitizationModel(AbstractDigitizationModel):
     def __init__(self):
         verify_environment()
-        work_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'work_dir')
-        self.work_dir = None#work_dir
+        # work_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'work_dir')
+        # self.work_dir = None#work_dir
         self.config = None#os.path.join(work_dir, "maskrcnn_res101.py")
         self.model = None
         self.unet = None
@@ -575,14 +573,14 @@ class OurDigitizationModel(AbstractDigitizationModel):
     def from_folder(cls, model_folder, verbose):
          # Create an instance of the class
         instance = cls()
-        instance.work_dir = model_folder
+        # instance.work_dir = model_folder
         instance.config = os.path.join(model_folder, "maskrcnn_res101.py")
         # Construct checkpoint path based on the model_folder parameter
-        maskrcnn_checkpoint_file = os.path.join(instance.work_dir, 'epoch_12.pth')
+        maskrcnn_checkpoint_file = os.path.join(model_folder, 'epoch_12.pth')
 
         # Initialize the model using instance-specific variables
         instance.model = init_detector(instance.config, maskrcnn_checkpoint_file, device=dev)
-        instance.unet = ECGPredictor('resunet10', os.path.join(instance.work_dir,'segmentation/segmentation_model.pth'), size=208, cbam=False)
+        instance.unet = ECGPredictor('resunet10', os.path.join(model_folder,'segmentation/segmentation_model.pth'), size=208, cbam=False)
 
         if verbose:
             print(f"Model loaded from {maskrcnn_checkpoint_file}")
@@ -609,11 +607,11 @@ class OurDigitizationModel(AbstractDigitizationModel):
         if verbose:
             print("Detection model training completed.")
 
-    def train_segmentation_model(self, data_folder, model_folder, work_dir, verbose):
+    def train_segmentation_model(self, data_folder, model_folder, verbose):
         if verbose:
             print("Training segmentation model...")
         
-        param_file = os.path.join(work_dir, 'ecg_params.json')
+        param_file = os.path.join(model_folder, 'ecg_params.json')
         param_set = "segmentation"
         unet_data_dir = os.path.join(data_folder, 'cropped_img')
         ecg = ECGSegment(
@@ -625,7 +623,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
             models_dir=model_folder,
             cv=5,
             resume_training=True,
-            checkpoint_path=os.path.join(work_dir, 'segmentation_base_model.pth')
+            checkpoint_path=os.path.join(model_folder, 'segmentation_base_model.pth')
         )
         
         if verbose:
@@ -633,8 +631,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
     def train_model(self, data_folder, model_folder, verbose):
         multiprocessing.set_start_method('spawn')
-        # generate_data(data_folder, model_folder, verbose)
-        # prepare_data_for_training(data_folder, model_folder, verbose)
+        generate_data(data_folder, model_folder, verbose)
+        prepare_data_for_training(data_folder, model_folder, verbose)
         if verbose:
             print('Training the digitization model...')
             print('Finding the Challenge data...')
@@ -645,8 +643,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
         
         # load config
         base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
-        work_dir = os.path.join(base_dir, 'work_dir')
-        config_file_path = os.path.join(work_dir, 'maskrcnn_config.py')
+        # work_dir = os.path.join(base_dir, 'work_dir')
+        config_file_path = os.path.join(model_folder, 'maskrcnn_res101.py')
         cfg = Config.fromfile(config_file_path)
         cfg.metainfo = {
             'classes': ('ecg_lead', ),
@@ -675,10 +673,10 @@ class OurDigitizationModel(AbstractDigitizationModel):
         cfg.val_evaluator = None
         # cfg.test_evaluator = cfg.val_evaluator
         
-        cfg.work_dir = os.path.join(model_folder, 'maskrcnn_config.py')
+        cfg.work_dir = os.path.join(model_folder, 'maskrcnn_res101.py')
         cfg.data_root = data_folder
         # assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
-        cfg.load_from = os.path.join(base_dir,'checkpoints', 'mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth')
+        cfg.load_from = os.path.join(base_dir,'checkpoints', 'mask_rcnn_r101_caffe_fpn_1x_coco_20200601_095758-805e06c1.pth')
 
         cfg.optim_wrapper.type = 'AmpOptimWrapper'
         cfg.optim_wrapper.loss_scale = 'dynamic'
@@ -687,7 +685,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
         # Start the training in separate threads
         detection_thread = multiprocessing.Process(target=self.train_detection_model, args=(cfg, model_folder, verbose))
-        segmentation_thread = multiprocessing.Process(target=self.train_segmentation_model, args=(data_folder, model_folder, work_dir, verbose))
+        segmentation_thread = multiprocessing.Process(target=self.train_segmentation_model, args=(data_folder, model_folder, verbose))
     
         detection_thread.start()
         segmentation_thread.start()
