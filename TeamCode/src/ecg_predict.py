@@ -43,7 +43,7 @@ class ECGPredictor(object):
         return prednp
     
     
-    def run(self, image, bboxes):
+    def run(self, image, bboxes, n):
         self.res_maps = [None] * len(bboxes)  # Initialize with None to preserve order
         if image.ndim == 3:  # Image has 3 dimensions and the third dimension has 3 channels
             # Convert RGBA to grayscale

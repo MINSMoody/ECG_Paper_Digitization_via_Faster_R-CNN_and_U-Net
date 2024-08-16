@@ -7,6 +7,7 @@ import helper_code as hc
 import numpy as np
 import os
 import cv2
+import pickle
 
 
 from concurrent.futures import ThreadPoolExecutor
@@ -67,23 +68,34 @@ elif device == 'gpu':
 def nan_helper(y):
     return np.isnan(y), lambda z: z.nonzero()[0]
 
+# def interpolate_nan(signal):
+#     if np.isnan(signal[0]):
+#         signal[0] = 0
+#     if np.isnan(signal[-1]):
+#         signal[-1] = 0
+#     nans, x = nan_helper(signal)
+#     if len(nans) == 0:
+#         return signal
+#     signal[nans] = np.interp(x(nans), x(~nans), signal[~nans])
+#     return signal
+
+from scipy.interpolate import CubicSpline
+
 def interpolate_nan(signal):
-    if np.isnan(signal[0]):
-        signal[0] = 0
-    if np.isnan(signal[-1]):
-        signal[-1] = 0
-    nans, x = nan_helper(signal)
-    if len(nans) == 0:
-        return signal
+    nans, x = np.isnan(signal), lambda z: z.nonzero()[0]
     signal[nans] = np.interp(x(nans), x(~nans), signal[~nans])
-    return signal
+    # For sharper interpolation:
+    cs = CubicSpline(np.arange(len(signal)), signal, bc_type='natural')
+    return cs(np.arange(len(signal)))
 
-def upsample(signal, num_samples):
-    x = np.linspace(0, len(signal)-1, num_samples)
-    return interpolate.interp1d(np.arange(len(signal)), signal, kind='linear')(x)
+from scipy.signal import resample
 
-def downsample(signal, num_samples):
-    return upsample(signal, num_samples)
+def upsample(signal, target_length):
+    return resample(signal, target_length)
+
+def downsample(signal, target_length):
+    return resample(signal, target_length)
+
 
 def filter_boxes(pred_bboxes, pred_labels, pred_scores, pred_masks):
     def bbox_iou(box1, box2):
@@ -138,111 +150,106 @@ def filter_boxes(pred_bboxes, pred_labels, pred_scores, pred_masks):
     
     return pred_bboxes, pred_labels, pred_scores, pred_masks
 
+from scipy.signal import savgol_filter
+
+def apply_savgol_filter(signal):
+    return savgol_filter(signal, window_length=5, polyorder=3)  # Adjust parameters as needed
+
 def bboxes_sorting_12(bboxes, masks):
-    bboxes_avg_H = list((bboxes[:,1]+bboxes[:,3])/2)
-    bboxes_avg_W = list((bboxes[:,0]+bboxes[:,2])/2)
-    bboxes_avg = np.array([bboxes_avg_H, bboxes_avg_W]).transpose()
-    # sort by W
-    sortW_idx = bboxes_avg[:, 1].argsort()
+    # Compute the average height and width directly using numpy for efficiency
+    bboxes_avg = (bboxes[:, [1, 3]].mean(axis=1), bboxes[:, [0, 2]].mean(axis=1))
+    bboxes_avg = np.array(bboxes_avg).T
+    
+    # Sort by the average width
+    sortW_idx = np.argsort(bboxes_avg[:, 1])
     bboxes_avg = bboxes_avg[sortW_idx]
     masks = masks[sortW_idx]
     bboxes = bboxes[sortW_idx]
-    col1 = list(bboxes_avg[0:3, 0].argsort())
-    col2 = list(bboxes_avg[3:6, 0].argsort()+3)
-    col3 = list(bboxes_avg[6:9, 0].argsort()+6)
-    col4 = list(bboxes_avg[9:12, 0].argsort()+9)
-    idx = col1+col2+col3+col4
+    
+    # Sort columns by the average height
+    idx = np.hstack([
+        np.argsort(bboxes_avg[0:3, 0]),
+        np.argsort(bboxes_avg[3:6, 0]) + 3,
+        np.argsort(bboxes_avg[6:9, 0]) + 6,
+        np.argsort(bboxes_avg[9:12, 0]) + 9
+    ])
+    
     masks = masks[idx]
     bboxes = bboxes[idx]
-    ### now assign values row by row
-    rowl = np.median(bboxes[0:3,0])
-    rowr = np.median(bboxes[9:12,2])
-    leadwidth = (rowr - rowl)/4
-    bboxes[0,0] =  rowl
-    bboxes[1,0] =  rowl
-    bboxes[2,0] =  rowl
-    bboxes[0,2] = rowl+leadwidth
-    bboxes[1,2] = rowl+leadwidth
-    bboxes[2,2] = rowl+leadwidth
-    bboxes[3,0] = rowl+leadwidth
-    bboxes[4,0] = rowl+leadwidth
-    bboxes[5,0] = rowl+leadwidth
-    bboxes[3,2] = rowl+leadwidth*2
-    bboxes[4,2] = rowl+leadwidth*2
-    bboxes[5,2] = rowl+leadwidth*2
-    bboxes[6,0] = rowl+leadwidth*2
-    bboxes[7,0] = rowl+leadwidth*2
-    bboxes[8,0] = rowl+leadwidth*2
-    bboxes[6,2] = rowl+leadwidth*3
-    bboxes[7,2] = rowl+leadwidth*3
-    bboxes[8,2] = rowl+leadwidth*3
-    bboxes[9,0] = rowl+leadwidth*3
-    bboxes[10,0] = rowl+leadwidth*3
-    bboxes[11,0] = rowl+leadwidth*3
-    bboxes[9,2] = rowr
-    bboxes[10,2] = rowr
-    bboxes[11,2] = rowr
+    
+    # Calculate row boundaries and lead width
+    rowl = np.median(bboxes[0:3, 0])
+    rowr = np.median(bboxes[9:12, 2])
+    leadwidth = (rowr - rowl) / 4
+    
+    # Assign values row by row
+    for i in range(0, 12, 3):
+        bboxes[i:i+3, 0] = rowl + leadwidth * (i // 3)
+        bboxes[i:i+3, 2] = rowl + leadwidth * (i // 3 + 1)
+    
+    bboxes[9:12, 2] = rowr  # Final column adjustment
+    
     return bboxes, masks
+
 
 
 
 def bboxes_sorting_13(bboxes, masks):
-    bboxes_avg_H = list((bboxes[:,1]+bboxes[:,3])/2)
-    bboxes_avg_W = list((bboxes[:,0]+bboxes[:,2])/2)
-    bboxes_avg = np.array([bboxes_avg_H, bboxes_avg_W]).transpose()
-    sortH_idx = bboxes_avg[:, 0].argsort()
-    #first take the long leads and 3x4
+    # Compute the average height and width directly using numpy for efficiency
+    bboxes_avg = (bboxes[:, [1, 3]].mean(axis=1), bboxes[:, [0, 2]].mean(axis=1))
+    bboxes_avg = np.array(bboxes_avg).T
+    
+    # Sort by the average height
+    sortH_idx = np.argsort(bboxes_avg[:, 0])
+    
+    # Separate the last item
     mask_last = masks[sortH_idx[12]]
     bbox_last = bboxes[sortH_idx[12]]
-    bboxes_avg = bboxes_avg[sortH_idx[0:12]]
-    masks = masks[sortH_idx[0:12]]
-    bboxes = bboxes[sortH_idx[0:12]]
-    #then sort by W
-    sortW_idx = bboxes_avg[:, 1].argsort()
+    
+    # Keep only the first 12 items
+    bboxes_avg = bboxes_avg[sortH_idx[:12]]
+    masks = masks[sortH_idx[:12]]
+    bboxes = bboxes[sortH_idx[:12]]
+    
+    # Sort by the average width
+    sortW_idx = np.argsort(bboxes_avg[:, 1])
     bboxes_avg = bboxes_avg[sortW_idx]
     masks = masks[sortW_idx]
     bboxes = bboxes[sortW_idx]
-    col1 = list(bboxes_avg[0:3, 0].argsort())
-    col2 = list(bboxes_avg[3:6, 0].argsort()+3)
-    col3 = list(bboxes_avg[6:9, 0].argsort()+6)
-    col4 = list(bboxes_avg[9:12, 0].argsort()+9)
-    idx = col1+col2+col3+col4
+    
+    # Sort columns by the average height
+    idx = np.hstack([
+        np.argsort(bboxes_avg[0:3, 0]),
+        np.argsort(bboxes_avg[3:6, 0]) + 3,
+        np.argsort(bboxes_avg[6:9, 0]) + 6,
+        np.argsort(bboxes_avg[9:12, 0]) + 9
+    ])
+    
     masks = masks[idx]
     bboxes = bboxes[idx]
+    
+    # Insert the last bbox and mask
     bboxes[1] = bbox_last
     masks[1] = mask_last
-    # bboxes = np.append(bboxes, bbox_last.reshape((1,-1)), axis=0)
-    # masks = np.append(masks, mask_last.reshape((1,mask_last.shape[0],mask_last.shape[1])), axis=0)
-    # now manually assign the values
-    rowl = np.median(bboxes[0:3,0])
-    rowr = np.median(bboxes[9:12,2])
-    leadwidth = (rowr - rowl)/4
-    bboxes[0,0] =  rowl
-    bboxes[1,0] =  rowl
-    bboxes[2,0] =  rowl
-    bboxes[0,2] = rowl+leadwidth
-    #bboxes[1,2] = rowl+leadwidth
-    bboxes[2,2] = rowl+leadwidth
-    bboxes[3,0] = rowl+leadwidth
-    bboxes[4,0] = rowl+leadwidth
-    bboxes[5,0] = rowl+leadwidth
-    bboxes[3,2] = rowl+leadwidth*2
-    bboxes[4,2] = rowl+leadwidth*2
-    bboxes[5,2] = rowl+leadwidth*2
-    bboxes[6,0] = rowl+leadwidth*2
-    bboxes[7,0] = rowl+leadwidth*2
-    bboxes[8,0] = rowl+leadwidth*2
-    bboxes[6,2] = rowl+leadwidth*3
-    bboxes[7,2] = rowl+leadwidth*3
-    bboxes[8,2] = rowl+leadwidth*3
-    bboxes[9,0] = rowl+leadwidth*3
-    bboxes[10,0] = rowl+leadwidth*3
-    bboxes[11,0] = rowl+leadwidth*3
-    bboxes[9,2] = rowr
-    bboxes[10,2] = rowr
-    bboxes[11,2] = rowr
-    bboxes[1,2] = rowr if bboxes[1,2] < rowr else bboxes[1,2]
+    
+    # Calculate row boundaries and lead width
+    rowl = np.median(bboxes[0:3, 0])
+    rowr = np.median(bboxes[9:12, 2])
+    leadwidth = (rowr - rowl) / 4
+    
+    # Assign values row by row
+    for i in range(0, 12, 3):
+        bboxes[i:i+3, 0] = rowl + leadwidth * (i // 3)
+        bboxes[i:i+3, 2] = rowl + leadwidth * (i // 3 + 1)
+    
+    bboxes[9:12, 2] = rowr  # Final column adjustment
+    
+    # Special case for the inserted last bbox
+    if bboxes[1, 2] < rowr:
+        bboxes[1, 2] = rowr
+    
     return bboxes, masks
+
 
 
 ## helper functions end 
@@ -285,17 +292,13 @@ def crop_from_bbox(bbox, mask, mV_pixel):
 
 
 def readOut(header_path, masks, bboxes, mV_pixel):
-    # bboxes = bboxes.astype(int)
-    # print(bboxes.shape[0])
-    
 
     
     with open(header_path, 'r') as f:
         input_header = f.read()
 
     num_samples = get_num_samples(input_header)
-    # set the number of masks same as bboxes
-    # masks = masks[:bboxes.shape[0], :, :]
+
     # case 1: less than 12 boxes, return empty signals
     # assert bboxes.shape[0] == masks.shape[0], f"Expected shape {bboxes.shape[0]}, got {masks.shape[0]}"
     if bboxes.shape[0] < 12:
@@ -317,6 +320,7 @@ def readOut(header_path, masks, bboxes, mV_pixel):
             signal = interpolate_nan(signal) - np.mean(signal)
             signal = np.clip(signal, -2, 2)
             signallen = num_samples // 4
+            signal = apply_savgol_filter(signal)
             signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
             start_idx = (num_samples // 4) * (i // 3)
             end_idx = start_idx + (num_samples // 4)
@@ -336,7 +340,9 @@ def readOut(header_path, masks, bboxes, mV_pixel):
             signal = interpolate_nan(signal) - np.mean(signal)
             signal = np.clip(signal, -2, 2)
             signallen = num_samples if i == 1 else num_samples // 4
+            signal = apply_savgol_filter(signal)
             signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
+            
             if i == 1:
                 signals_np[i] = signal
             else:
@@ -745,17 +751,25 @@ class OurDigitizationModel(AbstractDigitizationModel):
         image = img/255.0
         # assert bboxes.shape == (13, 4), f"Expected shape (13, 4), got {bboxes.shape}"
         
-        to_be_readout = self.unet.run(image, bboxes) # float
-        to_be_readout = np.where(to_be_readout > 0.3, True, False)
+        # enlarge the bboxes by n pixels
+        n = 0
+        # bboxes[:, 0] = np.maximum(bboxes[:, 0] - n, 0)
+        # bboxes[:, 1] = np.maximum(bboxes[:, 1] - n, 0)
+        # bboxes[:, 2] = np.minimum(bboxes[:, 2] + n, img.shape[1])
+        # bboxes[:, 3] = np.minimum(bboxes[:, 3] + n, img.shape[0])
+
+
+
+        to_be_readout = self.unet.run(image, bboxes, n) # float
+        # shrink the masks back to original size
+        # to_be_readout = to_be_readout[:, n:-n, n:-n]
+        to_be_readout = np.where(to_be_readout > 0.5, True, False)
         # print(min(to_be_readout[0]), max(to_be_readout[0]))
         # assert len(to_be_readout) == 13, f"Expected 13 signals, got {len(to_be_readout)}"
         # assert len(bboxes) == len(to_be_readout), f"Expected {len(bboxes)} signals, got {len(to_be_readout)}"
         # assert to_be_readout[0].shape == (img.shape[0], img.shape[1]), f"Expected shape {(img.shape[0], img.shape[1])}, got {to_be_readout[0].shape}"
         
-        import pickle
-        to_dump = {'bboxes': bboxes, 'masks': to_be_readout, 'scores': scores, 'labels': labels, 'record': record}
-        with open('to_dump.pkl', 'wb') as f:
-            pickle.dump(to_dump, f)
+        
         # assert to_be_readout.shape == masks.shape, f"Expected shape {masks.shape}, got {to_be_readout.shape}"
         # assert to_be_readout.shape[0] == 13, f"Expected 13 signals, got {to_be_readout.shape[0]}"
         # if masks.shape[0] < 13:
@@ -767,35 +781,62 @@ class OurDigitizationModel(AbstractDigitizationModel):
         mV_pixel = (25.4 *8.5*0.5)/(masks[0].shape[0]*5) #hardcoded for now
         # # mV_pixel = (1.5*25.4 *8.5*0.5)/(masks[0].shape[0]*5)
         header_path = hc.get_header_file(record)
-        # # load gt masks for debuging:
-        # directory_path = os.path.dirname(img_path)
-        # img_name = os.path.splitext(os.path.basename(img_path))[0]
-        # mask_path = os.path.join(directory_path, img_name + '_mask.png')
-        # gt_mask_load = mmcv.imread(mask_path, flag='grayscale')
-        # gt_masks = []
-        # for bbox in bboxes:
-        #     x1, y1, x2, y2 = bbox
-        #     gt_mask = np.zeros_like(gt_mask_load)
-        #     gt_mask[y1:y2, x1:x2] = gt_mask_load[y1:y2, x1:x2]
-        #     # mmcv.imwrite(gt_mask, 'gt_mask.png')
-        #     gt_masks.append(gt_mask)
-        # gt_masks = np.array(gt_masks)
+
+        # load gt masks for debuging:
+        # Get directory and image name
+        directory_path = os.path.dirname(img_path)
+        img_name = os.path.splitext(os.path.basename(img_path))[0]
+
+        # Correctly assign paths
+        bbox_path = os.path.join(directory_path, img_name + '.json')
+        mask_path = os.path.join(directory_path, img_name + '_mask.png')
+
+        # Load bounding box coordinates from JSON
+        with open(bbox_path, 'r') as file:
+            settings = json.load(file)
+
+        gt_bboxes = []
+        for lead in settings['leads']:
+            coords = lead['lead_bounding_box']
+            x_coords = [coord[1] for coord in coords.values()]
+            y_coords = [coord[0] for coord in coords.values()]
+            x_min, x_max = min(x_coords), max(x_coords)
+            y_min, y_max = min(y_coords), max(y_coords)
+            gt_bboxes.append([x_min, y_min, x_max, y_max])
+
+        # Convert gt_bboxes to a numpy array
+        gt_bboxes = np.array(gt_bboxes)
+
+        # Load the mask
+        gt_mask_load = mmcv.imread(mask_path, flag='grayscale')
+        gt_masks = []
+
+        # Generate masks for each bounding box
+        for gt_bbox in gt_bboxes:
+            x1, y1, x2, y2 = map(int, gt_bbox)  # Ensure coordinates are integers
+            gt_mask = np.zeros_like(gt_mask_load)
+            gt_mask[y1:y2, x1:x2] = gt_mask_load[y1:y2, x1:x2]
+            gt_masks.append(gt_mask)
+
+        # Convert gt_masks to a numpy array
+        gt_masks = np.array(gt_masks)
+                
         
-        # bbox_path = mask_path = os.path.join(directory_path, img_name + '.json')
-        # with open(bbox_path, 'r') as file:
-        #     settings = json.load(file)
-        # for lead in settings['leads']:
-        #     coords = lead['lead_bounding_box']
-        #     x_coords = [coord[1] for coord in coords.values()]
-        #     y_coords = [coord[0] for coord in coords.values()]
-        #     x_min, x_max = min(x_coords), max(x_coords)
-        #     y_min, y_max = min(y_coords), max(y_coords)
             
         
         # assert gt_masks.shape == to_be_readout.shape, f"Expected shape {to_be_readout.shape}, got {gt_masks.shape}"
         # signal=readOut(header_path, masks, bboxes, mV_pixel)
         signal=readOut(header_path, to_be_readout, bboxes, mV_pixel)
-        # signal=readOut(header_path, gt_masks, bboxes, mV_pixel)
+        # signal=readOut(header_path, gt_masks, gt_bboxes, mV_pixel)
+
+        to_dump = {'bboxes': bboxes, 'masks': to_be_readout, 'scores': scores, 'labels': labels, 'record': record}
+        with open('to_dump.pkl', 'wb') as f:
+            pickle.dump(to_dump, f)
+
+        
+        # to_dump = {'bboxes': gt_bboxes, 'masks': gt_masks, 'scores': scores, 'labels': labels, 'record': record}
+        # with open('to_dump.pkl', 'wb') as f:
+        #     pickle.dump(to_dump, f)
         return signal
     
 
