@@ -129,7 +129,7 @@ def run_single_file(args):
 
         filename = args.input_file
         header = args.header_file
-        resolution = random.choice(range(50,args.resolution+1)) if (args.random_resolution) else args.resolution
+        resolution = random.choice(range(100,args.resolution+1)) if (args.random_resolution) else args.resolution
         padding = random.choice(range(0,args.pad_inches+1)) if (args.random_padding) else args.pad_inches
         
         papersize = ''
@@ -225,12 +225,12 @@ def run_single_file(args):
                         crop = args.crop
                 else:
                     crop = 0
-                blue_temp = np.random.choice([True,False], p=[0.75, 0.25])
+                blue_temp = np.random.choice([True,False], p=[0.25, 0.75])
 
                 if(blue_temp):
-                    temp = random.choice(range(2000,2500))
+                    temp = random.choice(range(4000,5000))
                 else:
-                    temp = random.choice(range(10000,12500))
+                    temp = random.choice(range(7000,9000))
                 rotate = args.rotate
                 out = get_augment(out,output_directory=args.output_directory,rotate=args.rotate,noise=noise,crop=crop,temperature=temp,bbox = args.lead_bbox, store_text_bounding_box = args.lead_name_bbox, json_dict = json_dict)
             

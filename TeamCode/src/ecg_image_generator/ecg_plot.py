@@ -208,9 +208,9 @@ def ecg_plot(
         grey_random_color = random.uniform(0,0.2)
         color_line  = (grey_random_color,grey_random_color,grey_random_color)
     else:
-        major_random_color_sampler_red = random.uniform(0,0.8)
-        major_random_color_sampler_green = random.uniform(0,0.5)
-        major_random_color_sampler_blue = random.uniform(0,0.5)
+        major_random_color_sampler_red = random.uniform(0.2,0.6)
+        major_random_color_sampler_green = random.uniform(0,0.3)
+        major_random_color_sampler_blue = random.uniform(0,0.3)
 
         minor_offset = random.uniform(0,0.2)
         minor_random_color_sampler_red = major_random_color_sampler_red + minor_offset

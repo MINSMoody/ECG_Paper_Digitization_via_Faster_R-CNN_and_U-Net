@@ -83,6 +83,9 @@ from scipy.interpolate import CubicSpline
 
 def interpolate_nan(signal):
     nans, x = np.isnan(signal), lambda z: z.nonzero()[0]
+    if np.isnan(signal).all():
+        warnings.warn("Signal is all nan", UserWarning)
+        return np.zeros_like(signal)
     signal[nans] = np.interp(x(nans), x(~nans), signal[~nans])
     # For sharper interpolation:
     cs = CubicSpline(np.arange(len(signal)), signal, bc_type='natural')
@@ -98,55 +101,90 @@ def downsample(signal, target_length):
 
 
 def filter_boxes(pred_bboxes, pred_labels, pred_scores, pred_masks):
+    """
+    Filter out the boxes with low confidence score and remove the boxes with high IoU
+    Args:
+        pred_bboxes (np): list of bounding boxes
+        pred_labels (np): list of labels
+        pred_scores (np): list of confidence scores
+        pred_masks (np): list of maskss
+    Returns:
+        np: filtered bounding boxes
+        np: filtered labels
+        np: filtered confidence scores
+        np: filtered masks
+    """
+    def bbox_intersection_over_smaller_area(box1, box2):
+        # Get the coordinates of bounding boxes
+        b1_x1, b1_y1, b1_x2, b1_y2 = box1
+        b2_x1, b2_y1, b2_x2, b2_y2 = box2
+
+        # get the corrdinates of the intersection rectangle
+        inter_rect_x1 = max(b1_x1, b2_x1)
+        inter_rect_y1 = max(b1_y1, b2_y1)
+        inter_rect_x2 = min(b1_x2, b2_x2)
+        inter_rect_y2 = min(b1_y2, b2_y2)
+
+        # Intersection area
+        inter_area = max(inter_rect_x2 - inter_rect_x1 + 1, 0) * max(inter_rect_y2 - inter_rect_y1 + 1, 0)
+
+        # boxes Area
+        b1_area = (b1_x2 - b1_x1 + 1) * (b1_y2 - b1_y1 + 1)
+        b2_area = (b2_x2 - b2_x1 + 1) * (b2_y2 - b2_y1 + 1)
+        
+        return inter_area / min(b1_area, b2_area)
     def bbox_iou(box1, box2):
-        inter_rect_x1 = max(box1[0], box2[0])
-        inter_rect_y1 = max(box1[1], box2[1])
-        inter_rect_x2 = min(box1[2], box2[2])
-        inter_rect_y2 = min(box1[3], box2[3])
+        """
+        Calculate the Intersection of Unions (IoUs) between bounding boxes.
+        Args:
+            box1 (list): bounding box formatted as [x1, y1, x2, y2]
+            box2 (list): bounding box formatted as [x1, y1, x2, y2]
+        Returns:
+            float: IoU value
+        """
+        # Get the coordinates of bounding boxes
+        b1_x1, b1_y1, b1_x2, b1_y2 = box1
+        b2_x1, b2_y1, b2_x2, b2_y2 = box2
 
-        inter_area = max(0, inter_rect_x2 - inter_rect_x1 + 1) * max(0, inter_rect_y2 - inter_rect_y1 + 1)
+        # get the corrdinates of the intersection rectangle
+        inter_rect_x1 = max(b1_x1, b2_x1)
+        inter_rect_y1 = max(b1_y1, b2_y1)
+        inter_rect_x2 = min(b1_x2, b2_x2)
+        inter_rect_y2 = min(b1_y2, b2_y2)
 
-        b1_area = (box1[2] - box1[0] + 1) * (box1[3] - box1[1] + 1)
-        b2_area = (box2[2] - box2[0] + 1) * (box2[3] - box2[1] + 1)
+        # Intersection area
+        inter_area = max(inter_rect_x2 - inter_rect_x1 + 1, 0) * max(inter_rect_y2 - inter_rect_y1 + 1, 0)
 
-        return inter_area / (b1_area + b2_area - inter_area)
+        # Union Area
+        b1_area = (b1_x2 - b1_x1 + 1) * (b1_y2 - b1_y1 + 1)
+        b2_area = (b2_x2 - b2_x1 + 1) * (b2_y2 - b2_y1 + 1)
+
+        iou = inter_area / (b1_area + b2_area - inter_area)
+
+        return iou
+    # # loop over bounding boxes, if find some boxes have iou > 0.5, filter out the one with lower score
+
+
+    for i in range(len(pred_bboxes)):
+        for j in range(i+1, len(pred_bboxes)):
+            iou = bbox_intersection_over_smaller_area(pred_bboxes[i], pred_bboxes[j])
+            if iou > 0.3:
+                if pred_scores[i] > pred_scores[j]:
+                    pred_scores[j] = 0
+                else:
+                    pred_scores[i] = 0
+    pred_bboxes = pred_bboxes[pred_scores > 0]
+    pred_labels = pred_labels[pred_scores > 0]
+    pred_masks = pred_masks[pred_scores > 0]
+    pred_scores = pred_scores[pred_scores > 0]
     
-    if len(pred_bboxes) > 13:
-        keep = np.ones(len(pred_bboxes), dtype=bool)
-        for i in range(len(pred_bboxes)):
-            for j in range(i + 1, len(pred_bboxes)):
-                if keep[j] and bbox_iou(pred_bboxes[i], pred_bboxes[j]) > 0.3:
-                    keep[j] = pred_scores[i] > pred_scores[j]
-
-        pred_bboxes = pred_bboxes[keep]
-        pred_labels = pred_labels[keep]
-        pred_masks = pred_masks[keep]
-        pred_scores = pred_scores[keep]
-
-    # Ensure there are exactly 13 bboxes
-    if len(pred_bboxes) > 13:
-        # Sort by scores in descending order
-        sorted_indices = np.argsort(pred_scores)[::-1]
-        pred_bboxes = pred_bboxes[sorted_indices][:13]
-        pred_labels = pred_labels[sorted_indices][:13]
-        pred_masks = pred_masks[sorted_indices][:13]
-        pred_scores = pred_scores[sorted_indices][:13]
-    # elif len(pred_bboxes) < 12:
-    #     # Pad the remaining slots with the highest scoring bboxes
-    #     top_indices = np.argsort(pred_scores)[::-1]
-    #     while len(pred_bboxes) < 13:
-    #         for idx in top_indices:
-    #             if len(pred_bboxes) < 13:
-    #                 pred_bboxes = np.append(pred_bboxes, [pred_bboxes[idx]], axis=0)
-    #                 pred_labels = np.append(pred_labels, [pred_labels[idx]], axis=0)
-    #                 pred_masks = np.append(pred_masks, [pred_masks[idx]], axis=0)
-    #                 pred_scores = np.append(pred_scores, [pred_scores[idx]], axis=0)
-    #             else:
-    #                 break
-    
-    
-    if len(pred_bboxes) != 13:
-        warnings.warn(f"Expected 13 boxes, got {len(pred_bboxes)}", UserWarning)
+    if len(pred_scores) > 13:
+        # sort the scores and get the top 13
+        indices = np.argsort(pred_scores)[::-1][:13]
+        pred_bboxes = pred_bboxes[indices]
+        pred_labels = pred_labels[indices]
+        pred_masks = pred_masks[indices]
+        pred_scores = pred_scores[indices]
     
     return pred_bboxes, pred_labels, pred_scores, pred_masks
 
@@ -337,6 +375,9 @@ def readOut(header_path, masks, bboxes, mV_pixel):
 
         for i in range(12):
             signal = crop_from_bbox(bboxes[i], masks[i], mV_pixel)   
+            if np.isnan(signal).all():
+                warnings.warn(f"Signal {i} is all nan", UserWarning)
+                signal = np.zeros_like(signal)
             signal = interpolate_nan(signal) - np.mean(signal)
             signal = np.clip(signal, -2, 2)
             signallen = num_samples if i == 1 else num_samples // 4
@@ -703,7 +744,24 @@ class OurDigitizationModel(AbstractDigitizationModel):
         if verbose:
             print("Both detection and segmentation models have been trained.")
         
+    def inferece_image(self, image_path, verbose):
+        img = mmcv.imread(image_path,channel_order='rgb')
+        result = inference_detector(self.model, img)
+        result_dict = result.to_dict()
+        pred = result_dict['pred_instances']
+        bboxes = pred['bboxes'].to(torch.int).cpu().detach().numpy()
+        # check if pred has masks 
+        masks = np.zeros((bboxes.shape[0], img.shape[0], img.shape[1]))
+        if 'masks' in pred:
+            masks = pred['masks'].cpu().detach().numpy()
+        scores = pred['scores'].cpu().detach().numpy()
+        labels = pred['labels'].cpu().detach().numpy()
+        bboxes, labels, scores, masks = filter_boxes(bboxes, labels, scores, masks)
+        image = img/255.0
+        bboxes, masks = bboxes_sorting_13(bboxes, masks)
+        to_be_readout = self.unet.run(image, bboxes, 0)
         
+        return to_be_readout
 
     
     def run_digitization_model(self, record, verbose):
@@ -728,6 +786,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         img = mmcv.imread(img_path,channel_order='rgb')
         # remove image gradient
         img = remove_image_gradients(img)
+        mmcv.imwrite(img, os.path.join(record, 'processed.png'))
         result = inference_detector(self.model, img)
         result_dict = result.to_dict()
         pred = result_dict['pred_instances']
@@ -784,56 +843,59 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
         # load gt masks for debuging:
         # Get directory and image name
-        directory_path = os.path.dirname(img_path)
-        img_name = os.path.splitext(os.path.basename(img_path))[0]
+        # directory_path = os.path.dirname(img_path)
+        # img_name = os.path.splitext(os.path.basename(img_path))[0]
 
-        # Correctly assign paths
-        bbox_path = os.path.join(directory_path, img_name + '.json')
-        mask_path = os.path.join(directory_path, img_name + '_mask.png')
+        # # Correctly assign paths
+        # bbox_path = os.path.join(directory_path, img_name + '.json')
+        # mask_path = os.path.join(directory_path, img_name + '_mask.png')
 
-        # Load bounding box coordinates from JSON
-        with open(bbox_path, 'r') as file:
-            settings = json.load(file)
+        # # Load bounding box coordinates from JSON
+        # with open(bbox_path, 'r') as file:
+        #     settings = json.load(file)
 
-        gt_bboxes = []
-        for lead in settings['leads']:
-            coords = lead['lead_bounding_box']
-            x_coords = [coord[1] for coord in coords.values()]
-            y_coords = [coord[0] for coord in coords.values()]
-            x_min, x_max = min(x_coords), max(x_coords)
-            y_min, y_max = min(y_coords), max(y_coords)
-            gt_bboxes.append([x_min, y_min, x_max, y_max])
+        # gt_bboxes = []
+        # for lead in settings['leads']:
+        #     coords = lead['lead_bounding_box']
+        #     x_coords = [coord[1] for coord in coords.values()]
+        #     y_coords = [coord[0] for coord in coords.values()]
+        #     x_min, x_max = min(x_coords), max(x_coords)
+        #     y_min, y_max = min(y_coords), max(y_coords)
+        #     gt_bboxes.append([x_min, y_min, x_max, y_max])
 
-        # Convert gt_bboxes to a numpy array
-        gt_bboxes = np.array(gt_bboxes)
+        # # Convert gt_bboxes to a numpy array
+        # gt_bboxes = np.array(gt_bboxes)
 
-        # Load the mask
-        gt_mask_load = mmcv.imread(mask_path, flag='grayscale')
-        gt_masks = []
+        # # Load the mask
+        # gt_mask_load = mmcv.imread(mask_path, flag='grayscale')
+        # gt_masks = []
 
-        # Generate masks for each bounding box
-        for gt_bbox in gt_bboxes:
-            x1, y1, x2, y2 = map(int, gt_bbox)  # Ensure coordinates are integers
-            gt_mask = np.zeros_like(gt_mask_load)
-            gt_mask[y1:y2, x1:x2] = gt_mask_load[y1:y2, x1:x2]
-            gt_masks.append(gt_mask)
+        # # Generate masks for each bounding box
+        # for gt_bbox in gt_bboxes:
+        #     x1, y1, x2, y2 = map(int, gt_bbox)  # Ensure coordinates are integers
+        #     gt_mask = np.zeros_like(gt_mask_load)
+        #     gt_mask[y1:y2, x1:x2] = gt_mask_load[y1:y2, x1:x2]
+        #     gt_masks.append(gt_mask)
 
-        # Convert gt_masks to a numpy array
-        gt_masks = np.array(gt_masks)
+        # # Convert gt_masks to a numpy array
+        # gt_masks = np.array(gt_masks)
+        # gt_masks = np.where(gt_masks > 0.1, True, False)
                 
         
             
         
         # assert gt_masks.shape == to_be_readout.shape, f"Expected shape {to_be_readout.shape}, got {gt_masks.shape}"
         # signal=readOut(header_path, masks, bboxes, mV_pixel)
+        
+        print('dumping pred')
         signal=readOut(header_path, to_be_readout, bboxes, mV_pixel)
-        # signal=readOut(header_path, gt_masks, gt_bboxes, mV_pixel)
 
         to_dump = {'bboxes': bboxes, 'masks': to_be_readout, 'scores': scores, 'labels': labels, 'record': record}
         with open('to_dump.pkl', 'wb') as f:
             pickle.dump(to_dump, f)
 
-        
+        # print('dumping gt')
+        # signal=readOut(header_path, gt_masks, gt_bboxes, mV_pixel)
         # to_dump = {'bboxes': gt_bboxes, 'masks': gt_masks, 'scores': scores, 'labels': labels, 'record': record}
         # with open('to_dump.pkl', 'wb') as f:
         #     pickle.dump(to_dump, f)

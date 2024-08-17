@@ -1,6 +1,6 @@
 auto_scale_lr = dict(base_batch_size=16, enable=False)
 backend_args = None
-data_root = '/scratch/hshang/moody/train_set/00000'
+data_root = '/scratch/hshang/moody/final_phase_submission/training_data'
 dataset_type = 'CocoDataset'
 default_hooks = dict(
     checkpoint=dict(interval=3, type='CheckpointHook'),
@@ -153,7 +153,7 @@ model = dict(
             score_thr=0.05),
         rpn=dict(
             max_per_img=100,
-            min_bbox_size=0,
+            min_bbox_size=10,
             nms=dict(iou_threshold=0.7, type='nms'),
             nms_pre=500)),
     train_cfg=dict(
@@ -161,18 +161,18 @@ model = dict(
             assigner=dict(
                 ignore_iof_thr=-1,
                 match_low_quality=True,
-                min_pos_iou=0.7,
+                min_pos_iou=0.8,
                 neg_iou_thr=0.7,
-                pos_iou_thr=0.3,
+                pos_iou_thr=0.8,
                 type='MaxIoUAssigner'),
             debug=False,
-            mask_size=70,
-            pos_weight=-1,
+            mask_size=112,
+            pos_weight=2.0,
             sampler=dict(
                 add_gt_as_proposals=True,
                 neg_pos_ub=-1,
-                num=512,
-                pos_fraction=0.5,
+                num=1028,
+                pos_fraction=0.6,
                 type='RandomSampler')),
         rpn=dict(
             allowed_border=-1,
@@ -180,21 +180,21 @@ model = dict(
                 ignore_iof_thr=-1,
                 match_low_quality=True,
                 min_pos_iou=0.3,
-                neg_iou_thr=0.3,
+                neg_iou_thr=0.2,
                 pos_iou_thr=0.7,
                 type='MaxIoUAssigner'),
             debug=False,
-            pos_weight=-1,
+            pos_weight=2.0,
             sampler=dict(
                 add_gt_as_proposals=False,
                 neg_pos_ub=-1,
                 num=256,
-                pos_fraction=0.5,
+                pos_fraction=0.6,
                 type='RandomSampler')),
         rpn_proposal=dict(
-            max_per_img=100,
-            min_bbox_size=0,
-            nms=dict(iou_threshold=0.7, type='nms'),
+            max_per_img=150,
+            min_bbox_size=10,
+            nms=dict(iou_threshold=0.6, type='nms'),
             nms_pre=500)),
     type='MaskRCNN')
 optim_wrapper = dict(
@@ -294,7 +294,7 @@ train_dataloader = dict(
         ann_file='annotation_coco.json',
         backend_args=None,
         data_prefix=dict(img=''),
-        data_root='/scratch/hshang/moody/train_set/00000',
+        data_root='/scratch/hshang/moody/final_phase_submission/training_data',
         filter_cfg=dict(filter_empty_gt=True, min_size=32),
         metainfo=dict(classes=('ecg_lead', ), palette=[
             (
@@ -395,4 +395,4 @@ visualizer = dict(
     vis_backends=[
         dict(type='LocalVisBackend'),
     ])
-work_dir = '/scratch/hshang/moody/final_phase_submission/official-phase-mins-eth/TeamCode/src/model'
+work_dir = '/scratch/hshang/moody/final_phase_submission/official-phase-mins-eth/model'
