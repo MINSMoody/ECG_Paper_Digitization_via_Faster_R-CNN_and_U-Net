@@ -15,6 +15,7 @@ from matplotlib.ticker import AutoMinorLocator
 from math import ceil 
 import time
 import random
+from imgaug import parameters as iap
 
 def get_parser():
     parser = argparse.ArgumentParser()
@@ -60,12 +61,24 @@ def get_augment(input_file,output_directory,rotate=25,noise=25,crop=0.01,tempera
     rot = random.randint(-rotate, rotate)
     crop_sample = random.uniform(0, crop)
     #Augment in a sequential manner. Create an augmentation object
-    seq = iaa.Sequential([
+    transform = [
           iaa.Affine(rotate=rot),
-          iaa.AdditiveGaussianNoise(scale=(noise, noise)),
+        #   iaa.ContrastNormalization(
+        #         iap.Choice(
+        #             [1.0, 1.5, 2.0],
+        #             p=[0.5, 0.3, 0.2]
+        #         )
+        #     ),
+        #   iaa.imgcorruptlike.ShotNoise(severity=1),
+          iaa.AdditiveGaussianNoise(scale=(0, noise)),
+          iaa.AdditivePoissonNoise(lam=(0.0, noise/4)),
+          iaa.Sharpen(alpha=(1.0, 1.0), lightness=(0.75, 1.5)),
+          
           iaa.Crop(percent=crop_sample),
-          iaa.ChangeColorTemperature(temperature)
-          ])
+          ]
+    if temperature:
+        transform.append(iaa.ChangeColorTemperature(temperature))
+    seq = iaa.Sequential(transform)
     seq_mask = iaa.Sequential([
           iaa.Affine(rotate=rot),
           iaa.Crop(percent=crop_sample)

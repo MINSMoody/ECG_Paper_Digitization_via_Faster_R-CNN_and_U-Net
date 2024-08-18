@@ -35,7 +35,7 @@ class ECGSegment(object):
     #     return
     def __load(self, image_path):
         self.dataset = []
-        counter = 0
+        # counter = 0
         for filename in tqdm(os.listdir(image_path)):
             # print(filename)
             tif = imread(os.path.join(image_path, filename)) / 255.0
@@ -47,9 +47,9 @@ class ECGSegment(object):
             # print(tif.shape, mask.shape)
             
             self.dataset.append([tif, mask])
-            counter += 1
-            if counter == 500:
-                break
+            # counter += 1
+            # if counter == 1000:
+            #     break
 
         random.seed(self.random_state)
         random.shuffle(self.dataset)

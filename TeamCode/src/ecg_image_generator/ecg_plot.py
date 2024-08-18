@@ -55,6 +55,67 @@ papersize_values = {'A0' : (33.1,46.8),
 def inches_to_dots(value,resolution):
     return (value * resolution)
 
+# Function to add noise to color
+def add_noise_to_color(color, noise_level=0.1):
+    noisy_color = color + noise_level * np.random.randn(3)
+    noisy_color = np.clip(noisy_color, 0, 1)  # Ensure RGB values stay within [0, 1]
+    return noisy_color
+
+# Function to adjust pixel intensity
+# def adjust_intensity(image_array, x_ticks, y_ticks, intensity_variation=0.2):
+    
+#     # Modify pixel intensity around grid lines
+#     for x in x_ticks:
+#         for y in range(image_array.shape[0]):  # for each y pixel
+#             variation = np.random.uniform(-intensity_variation, intensity_variation, size=3)
+#             image_array[y, int(x)] = np.clip(image_array[y, int(x)] + variation, 0, 255)
+    
+#     for y in y_ticks:
+#         for x in range(image_array.shape[1]):  # for each x pixel
+#             variation = np.random.uniform(-intensity_variation, intensity_variation, size=3)
+#             image_array[int(y), x] = np.clip(image_array[int(y), x] + variation, 0, 255)
+    
+#     return Image.fromarray(image_array.astype('uint8'))
+
+def break_line(image_array, x_ticks, y_ticks, line_width=2, probability=0.05):
+    
+    # Modify pixel intensity around grid lines
+    for x in x_ticks:
+        for y in range(image_array.shape[0]):  # for each y pixel
+            add_y_noise = np.random.choice([True, False], p=[probability, 1-probability])
+            if add_y_noise:
+                variation = int(np.random.uniform(-line_width, line_width, size=3))
+                image_array[y-variation:y+variation, int(x)] = 0
+    
+    for y in y_ticks:
+        for x in range(image_array.shape[1]):  # for each x pixel
+            add_x_noise = np.random.choice([True, False], p=[probability, 1-probability])
+            if add_x_noise:
+                variation = np.random.uniform(-line_width, line_width, size=3)
+                image_array[int(y), x-variation:x+variation] = 0
+    
+    return Image.fromarray(image_array.astype('uint8'))
+
+def adjust_width(image, x_ticks, y_ticks, width_variation=0.2, probability=0.05):
+    # 
+    image_array = np.array(image)
+    
+    for x in x_ticks:
+        for y in range(image_array.shape[0]):  # for each y pixel
+            add_y_noise = np.random.choice([True, False], p=[probability, 1-probability])
+            if add_y_noise:
+                variation = int(np.random.uniform(-width_variation, width_variation, size=3))
+                image_array[y-variation:y+variation, int(x)] = np.clip(image_array[y, int(x)], 0, 255)
+    
+    for y in y_ticks:
+        for x in range(image_array.shape[1]):  # for each x pixe
+            add_x_noise = np.random.choice([True, False], p=[probability, 1-probability])
+            if add_x_noise:
+                variation = np.random.uniform(-width_variation, width_variation, size=3)
+                image_array[int(y), x] = np.clip(image_array[int(y), x], 0, 255)
+    
+    return Image.fromarray(image_array.astype('uint8'))
+
 #Function to plot raw ecg signal
 def ecg_plot(
         ecg, 
@@ -165,6 +226,8 @@ def ecg_plot(
     json_dict['height'] = int(height*resolution)
     #Set figure and subplot sizes
     fig, ax = plt.subplots(figsize=(width, height), dpi=resolution)
+    
+    
    
     fig.subplots_adjust(
         hspace = 0, 
@@ -208,7 +271,7 @@ def ecg_plot(
         grey_random_color = random.uniform(0,0.2)
         color_line  = (grey_random_color,grey_random_color,grey_random_color)
     else:
-        major_random_color_sampler_red = random.uniform(0.2,0.6)
+        major_random_color_sampler_red = random.uniform(0.3,0.8)
         major_random_color_sampler_green = random.uniform(0,0.3)
         major_random_color_sampler_blue = random.uniform(0,0.3)
 
@@ -536,6 +599,29 @@ def ecg_plot(
         
         ax.grid(which='minor', linestyle='-', linewidth=grid_line_width, color=color_minor)
         
+        # Retrieve all gridlines
+        lines = ax.get_xgridlines() + ax.get_ygridlines()
+
+        # Precompute the probabilities for line width and disappearance
+        line_widths = [grid_line_width * 0.75, grid_line_width, grid_line_width * 1.5]
+        line_width_probs = [0.2, 0.6, 0.2]
+
+        # Iterate over the gridlines
+        for line in lines:
+            # Set the line width based on precomputed probabilities
+            chosen_width = np.random.choice(line_widths, p=line_width_probs)
+            
+            # Decide if the line should disappear
+            if np.random.random() < 0.05:
+                line.set_linewidth(0)  # Disappear the line
+            else:
+                line.set_linewidth(chosen_width)
+
+        # break_line(ax, np.arange(x_min,x_max,x_grid_size), np.arange(y_min,y_max,y_grid_size), line_width=2, probability=0.05)
+        # adjust_width(ax, np.arange(x_min,x_max,x_grid_size), np.arange(y_min,y_max,y_grid_size), width_variation=0.2, probability=0.05)
+        
+        
+        
         if store_configs == 2:
             json_dict['grid_line_color_major'] = [round(x*255., 2) for x in color_major]
             json_dict['grid_line_color_minor'] = [round(x*255., 2) for x in color_minor]
@@ -548,29 +634,6 @@ def ecg_plot(
     fig.clf()
     ax.cla()
 
-
-
-    if pad_inches!=0:
-        
-        ecg_image = Image.open(os.path.join(output_dir,tail +'.png'))
-        
-        right = pad_inches * resolution
-        left = pad_inches * resolution
-        top = pad_inches * resolution
-        bottom = pad_inches * resolution
-        width, height = ecg_image.size
-        new_width = width + right + left
-        new_height = height + top + bottom
-        result_image = Image.new(ecg_image.mode, (new_width, new_height), (255, 255, 255))
-        result_image.paste(ecg_image, (left, top))
-        
-        result_image.save(os.path.join(output_dir,tail +'.png'))
-
-        fig.close()
-        plt.close(fig)
-        fig.clf()
-        ax.cla()
-    
     if(masks):
         file_path = os.path.join(output_dir, 'masks', tail + '.png')  # Final file path
 
@@ -585,6 +648,77 @@ def ecg_plot(
         plt.close(fig1)
         fig1.clf()
         ax1.cla()
+
+    if pad_inches!=0:
+        ecg_image = Image.open(os.path.join(output_dir,tail +'.png'))
+        mask_image = Image.open(os.path.join(output_dir,'masks',tail + '.png'))
+        
+        right = pad_inches * resolution
+        left = pad_inches * resolution
+        top = pad_inches * resolution
+        bottom = pad_inches * resolution
+        width, height = ecg_image.size
+        
+        pad_mode = np.random.choice([1, 2, 3, 4], p=[0.5, 0.15, 0.15, 0.2])
+        if pad_mode == 1:
+            new_width = width + right + left
+            new_height = height + top + bottom
+            result_image = Image.new(ecg_image.mode, (new_width, new_height), (255, 255, 255))
+            result_image.paste(ecg_image, (left, top))
+            result_mask = Image.new(mask_image.mode, (new_width, new_height), (0, 0, 0))
+            result_mask.paste(mask_image, (left, top))
+            for lead in leads_ds:
+                lead_bbox = lead['lead_bounding_box']
+                for key, value in lead_bbox.items():
+                    lead_bbox[key] = [round(int(value[0]) + top), round(int(value[1]) + left)]
+        elif pad_mode == 2:
+            new_width = width + right + left
+            new_height = height
+            result_image = Image.new(ecg_image.mode, (new_width, new_height), (255, 255, 255))
+            result_image.paste(ecg_image, (left, 0))
+            result_mask = Image.new(mask_image.mode, (new_width, new_height), (0, 0, 0))
+            result_mask.paste(mask_image, (left, 0))
+            for lead in leads_ds:
+                lead_bbox = lead['lead_bounding_box']
+                for key, value in lead_bbox.items():
+                    lead_bbox[key] = [round(int(value[0])), round(int(value[1]) + left)]
+    
+        elif pad_mode == 3:
+            new_width = width
+            new_height = height + top + bottom
+            result_image = Image.new(ecg_image.mode, (new_width, new_height), (255, 255, 255))
+            result_image.paste(ecg_image, (0, top))
+            result_mask = Image.new(mask_image.mode, (new_width, new_height), (0, 0, 0))
+            result_mask.paste(mask_image, (0, top))
+            for lead in leads_ds:
+                lead_bbox = lead['lead_bounding_box']
+                for key, value in lead_bbox.items():
+                    lead_bbox[key] = [round(int(value[0]) + top), round(int(value[1]))]
+        else:
+            new_width = width + right
+            new_height = height + top 
+            result_image = Image.new(ecg_image.mode, (new_width, new_height), (255, 255, 255))
+            result_image.paste(ecg_image, (int(left//2), int(top//2)))
+            result_mask = Image.new(mask_image.mode, (new_width, new_height), (0, 0, 0))
+            result_mask.paste(mask_image, (int(left//2), int(top//2)))
+            for lead in leads_ds:
+                lead_bbox = lead['lead_bounding_box']
+                for key, value in lead_bbox.items():
+                    lead_bbox[key] = [round(int(value[0]) + top//2), round(int(value[1]) + left//2)]
+            
+        
+        
+        result_image.save(os.path.join(output_dir,tail +'.png'))
+        
+        
+        
+        result_mask.save(os.path.join(output_dir,'masks',tail + '.png'))
+
+        plt.close(fig)
+        fig.clf()
+        ax.cla()
+    
+    
 
     json_dict["leads"] = leads_ds
 

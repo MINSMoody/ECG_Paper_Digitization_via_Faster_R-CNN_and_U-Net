@@ -9,6 +9,12 @@ import os
 import cv2
 import pickle
 
+# from mmseg.registry import DATASETS
+# from mmseg.datasets import BaseSegDataset
+# # from mmseg.apis import MMSegInferencer
+
+# # from mmdet.apis import DetInferencer
+# from mmseg.apis import inference_model, init_model
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -99,6 +105,74 @@ def upsample(signal, target_length):
 def downsample(signal, target_length):
     return resample(signal, target_length)
 
+def dist(tuple1, tuple2):
+    return np.sqrt((tuple1[0]-tuple2[0])**2 + (tuple1[1]-tuple2[1])**2)
+
+def group_bboxes_row(bboxes, vertical_distance_threshold):
+    # bboxes_avg_H = list((bboxes[:,1]+bboxes[:,3])/2)
+    # bboxes_avg_W = list((bboxes[:,0]+bboxes[:,2])/2)
+    # bboxes_avg = bboxes[:,4:6]
+    row_dict = {}
+    for i in range(bboxes.shape[0]):
+        h, w = bboxes[i,4:6]
+    #for h, w  in bboxes_avg:
+        if not bool(row_dict):
+            row_dict[(h,w)] = [bboxes[i]]
+        else:
+            paired = False
+            for key in row_dict.keys():
+                if abs(key[0] - h) < vertical_distance_threshold:
+                    row_dict[key].append(bboxes[i])
+                    paired = True
+                    break
+            if not paired:
+                row_dict[(h,w)] = [bboxes[i]]
+    row_dict_new = {}
+    row_dict_numcol = {}
+    i = 0
+    for key in row_dict.keys():
+        row_dict_new[i]  = np.stack(row_dict[key], axis=0)
+        row_dict_numcol[i] = len(row_dict[key])
+        i += 1
+    return row_dict_new, row_dict_numcol
+
+
+
+
+
+def group_bboxes(bboxes, vertical_distance_threshold, horizontal_distance_threshold):
+    bboxes_avg_H = list((bboxes[:,1]+bboxes[:,3])/2)
+    bboxes_avg_W = list((bboxes[:,0]+bboxes[:,2])/2)
+    bboxes_avg = np.array([bboxes_avg_H, bboxes_avg_W]).transpose()
+    # sort by W
+    row_dict = {}
+    for h, w  in bboxes_avg:
+        if not bool(row_dict):
+            row_dict[(h,w)] = [(h, w)]
+        else:
+            paired = False
+            for key in row_dict.keys():
+                if abs(key[0] - h) < vertical_distance_threshold:
+                    row_dict[key].append((h,w))
+                    paired = True
+                    break
+            if not paired:
+                row_dict[(h,w)] = [(h,w)]
+    col_dict = {}
+    for h, w in bboxes_avg:
+        if not bool(col_dict):
+            col_dict[(h,w)] = [(h, w)]
+        else:
+            paired = False
+            for key in col_dict.keys():
+                if abs(key[1] - w) < horizontal_distance_threshold:
+                    col_dict[key].append((h,w))
+                    paired = True
+                    break
+            if not paired:
+                col_dict[(h,w)] = [(h,w)]
+    return row_dict, col_dict
+
 
 def filter_boxes(pred_bboxes, pred_labels, pred_scores, pred_masks):
     """
@@ -165,18 +239,19 @@ def filter_boxes(pred_bboxes, pred_labels, pred_scores, pred_masks):
     # # loop over bounding boxes, if find some boxes have iou > 0.5, filter out the one with lower score
 
 
-    for i in range(len(pred_bboxes)):
-        for j in range(i+1, len(pred_bboxes)):
-            iou = bbox_intersection_over_smaller_area(pred_bboxes[i], pred_bboxes[j])
-            if iou > 0.3:
-                if pred_scores[i] > pred_scores[j]:
-                    pred_scores[j] = 0
-                else:
-                    pred_scores[i] = 0
-    pred_bboxes = pred_bboxes[pred_scores > 0]
-    pred_labels = pred_labels[pred_scores > 0]
-    pred_masks = pred_masks[pred_scores > 0]
-    pred_scores = pred_scores[pred_scores > 0]
+    if len(pred_bboxes) >= 13:
+        for i in range(len(pred_bboxes)):
+            for j in range(i+1, len(pred_bboxes)):
+                iou = bbox_intersection_over_smaller_area(pred_bboxes[i], pred_bboxes[j])
+                if iou > 0.4:
+                    if pred_scores[i] > pred_scores[j]:
+                        pred_scores[j] = 0
+                    else:
+                        pred_scores[i] = 0
+        pred_bboxes = pred_bboxes[pred_scores > 0]
+        pred_labels = pred_labels[pred_scores > 0]
+        pred_masks = pred_masks[pred_scores > 0]
+        pred_scores = pred_scores[pred_scores > 0]
     
     if len(pred_scores) > 13:
         # sort the scores and get the top 13
@@ -193,100 +268,106 @@ from scipy.signal import savgol_filter
 def apply_savgol_filter(signal):
     return savgol_filter(signal, window_length=5, polyorder=3)  # Adjust parameters as needed
 
-def bboxes_sorting_12(bboxes, masks):
-    # Compute the average height and width directly using numpy for efficiency
-    bboxes_avg = (bboxes[:, [1, 3]].mean(axis=1), bboxes[:, [0, 2]].mean(axis=1))
-    bboxes_avg = np.array(bboxes_avg).T
-    
-    # Sort by the average width
-    sortW_idx = np.argsort(bboxes_avg[:, 1])
-    bboxes_avg = bboxes_avg[sortW_idx]
-    masks = masks[sortW_idx]
-    bboxes = bboxes[sortW_idx]
-    
-    # Sort columns by the average height
-    idx = np.hstack([
-        np.argsort(bboxes_avg[0:3, 0]),
-        np.argsort(bboxes_avg[3:6, 0]) + 3,
-        np.argsort(bboxes_avg[6:9, 0]) + 6,
-        np.argsort(bboxes_avg[9:12, 0]) + 9
-    ])
-    
-    masks = masks[idx]
-    bboxes = bboxes[idx]
-    
-    # Calculate row boundaries and lead width
-    rowl = np.median(bboxes[0:3, 0])
-    rowr = np.median(bboxes[9:12, 2])
-    leadwidth = (rowr - rowl) / 4
-    
-    # Assign values row by row
-    for i in range(0, 12, 3):
-        bboxes[i:i+3, 0] = rowl + leadwidth * (i // 3)
-        bboxes[i:i+3, 2] = rowl + leadwidth * (i // 3 + 1)
-    
-    bboxes[9:12, 2] = rowr  # Final column adjustment
-    
-    return bboxes, masks
+def bboxes_sorting(bboxes, img_width): # input: bboxes output by maskrcnn
+    # print(bboxes)
+    # first sort by H
+    bboxes_avg_H = (bboxes[:,1]+bboxes[:,3])/2
+    bboxes_avg_W = (bboxes[:,0]+bboxes[:,2])/2
+    bboxes = np.append(bboxes, bboxes_avg_H.reshape((-1,1)), axis=1)
+    bboxes = np.append(bboxes, bboxes_avg_W.reshape((-1,1)), axis=1)
+    sortH_idx = bboxes[:, 4].argsort()
+    bboxes = bboxes[sortH_idx]
 
-
-
-
-def bboxes_sorting_13(bboxes, masks):
-    # Compute the average height and width directly using numpy for efficiency
-    bboxes_avg = (bboxes[:, [1, 3]].mean(axis=1), bboxes[:, [0, 2]].mean(axis=1))
-    bboxes_avg = np.array(bboxes_avg).T
-    
-    # Sort by the average height
-    sortH_idx = np.argsort(bboxes_avg[:, 0])
-    
-    # Separate the last item
-    mask_last = masks[sortH_idx[12]]
-    bbox_last = bboxes[sortH_idx[12]]
-    
-    # Keep only the first 12 items
-    bboxes_avg = bboxes_avg[sortH_idx[:12]]
-    masks = masks[sortH_idx[:12]]
-    bboxes = bboxes[sortH_idx[:12]]
-    
-    # Sort by the average width
-    sortW_idx = np.argsort(bboxes_avg[:, 1])
-    bboxes_avg = bboxes_avg[sortW_idx]
-    masks = masks[sortW_idx]
-    bboxes = bboxes[sortW_idx]
-    
-    # Sort columns by the average height
-    idx = np.hstack([
-        np.argsort(bboxes_avg[0:3, 0]),
-        np.argsort(bboxes_avg[3:6, 0]) + 3,
-        np.argsort(bboxes_avg[6:9, 0]) + 6,
-        np.argsort(bboxes_avg[9:12, 0]) + 9
-    ])
-    
-    masks = masks[idx]
-    bboxes = bboxes[idx]
-    
-    # Insert the last bbox and mask
-    bboxes[1] = bbox_last
-    masks[1] = mask_last
-    
-    # Calculate row boundaries and lead width
-    rowl = np.median(bboxes[0:3, 0])
-    rowr = np.median(bboxes[9:12, 2])
-    leadwidth = (rowr - rowl) / 4
-    
-    # Assign values row by row
-    for i in range(0, 12, 3):
-        bboxes[i:i+3, 0] = rowl + leadwidth * (i // 3)
-        bboxes[i:i+3, 2] = rowl + leadwidth * (i // 3 + 1)
-    
-    bboxes[9:12, 2] = rowr  # Final column adjustment
-    
-    # Special case for the inserted last bbox
-    if bboxes[1, 2] < rowr:
-        bboxes[1, 2] = rowr
-    
-    return bboxes, masks
+    row_dict, row_dict_numcol = group_bboxes_row(bboxes, vertical_distance_threshold = img_width/10)
+    if len(row_dict) == 4:
+        ncol = max(list(row_dict_numcol.values()))
+        if ncol == 4:
+            print('row=4, col=4')
+            ## step 1, adjust the bboxes
+            rowswith4cols = [k for k,v in row_dict_numcol.items() if int(v) == 4]           
+            left = min([np.min(row_dict[row][:,0]) for row in rowswith4cols])
+            right = max([np.max(row_dict[row][:,2]) for row in rowswith4cols])
+            leadwidth = (right - left)/4
+            leftmid = left + leadwidth
+            mid = left + 2*leadwidth
+            rightmid = left + 3*leadwidth
+            for key in [0,1,2]:
+                if row_dict_numcol[key] == 4:
+                    row_dict[key] = row_dict[key][row_dict[key][:,5].argsort()]
+                    row_dict[key][0,0] = left
+                    row_dict[key][0,2] = leftmid
+                    row_dict[key][1,0] = leftmid
+                    row_dict[key][1,2] = mid
+                    row_dict[key][2,0] = mid
+                    row_dict[key][2,2] = rightmid
+                    row_dict[key][3,0] = rightmid
+                    row_dict[key][3,2] = right
+                else:
+                    new_bboxes = np.nan*np.ones((4,4))
+                    for i in range(row_dict[key].shape[0]):
+                        h, w = row_dict[key][i,4:6]
+                        if w < leftmid:
+                            new_bboxes[0] = [left, row_dict[key][i,1], leftmid, row_dict[key][i,3]]
+                        elif w < mid:
+                            new_bboxes[1] = [leftmid, row_dict[key][i,1], mid, row_dict[key][i,3]]
+                        elif w < rightmid:
+                            new_bboxes[2] = [mid, row_dict[key][i,1], rightmid, row_dict[key][i,3]]
+                        else:
+                            new_bboxes[3] = [rightmid, row_dict[key][i,1], right, row_dict[key][i,3]]
+                    row_dict[key] = new_bboxes
+                    
+            row_dict[3][0,0] = row_dict[3][0,0] if row_dict[3][0,0] < left else left
+            row_dict[3][0,2] = row_dict[3][0,2] if row_dict[3][0,2] > right else right
+            bboxes = np.concatenate([row_dict[0][:,0:4], row_dict[1][:,0:4], row_dict[2][:,0:4], row_dict[3][:,0:4]], axis=0)
+            standard_format = [0, 12, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11]
+            bboxes = bboxes[standard_format]
+            # print(bboxes)
+            return bboxes, 4
+    if len(row_dict) == 3:
+        ncol = max(list(row_dict_numcol.values()))
+        if ncol == 4:
+            print('row=3, col=4')
+            rowswith4cols = [k for k,v in row_dict_numcol.items() if int(v) == 4]           
+            left = min([np.min(row_dict[row][:,0]) for row in rowswith4cols])
+            right = max([np.max(row_dict[row][:,2]) for row in rowswith4cols])
+            leadwidth = (right - left)/4
+            leftmid = left + leadwidth
+            mid = left + 2*leadwidth
+            rightmid = left + 3*leadwidth
+            for key in [0,1,2]:
+                if row_dict_numcol[key] == 4:
+                    row_dict[key] = row_dict[key][row_dict[key][:,5].argsort()]
+                    row_dict[key][0,0] = left
+                    row_dict[key][0,2] = leftmid
+                    row_dict[key][1,0] = leftmid
+                    row_dict[key][1,2] = mid
+                    row_dict[key][2,0] = mid
+                    row_dict[key][2,2] = rightmid
+                    row_dict[key][3,0] = rightmid
+                    row_dict[key][3,2] = right
+                else:
+                    new_bboxes = np.nan*np.ones((4,4))
+                    for i in range(row_dict[key].shape[0]):
+                        h, w = row_dict[key][i,4:6]
+                        if w < leftmid:
+                            new_bboxes[0] = [left, row_dict[key][i,1], leftmid, row_dict[key][i,3]]
+                        elif w < mid:
+                            new_bboxes[1] = [leftmid, row_dict[key][i,1], mid, row_dict[key][i,3]]
+                        elif w < rightmid:
+                            new_bboxes[2] = [mid, row_dict[key][i,1], rightmid, row_dict[key][i,3]]
+                        else:
+                            new_bboxes[3] = [rightmid, row_dict[key][i,1], right, row_dict[key][i,3]]
+                    # bottom_max = np.max(row_dict[key][:,4])
+                    # top_min = np.min(row_dict[key][:,1])
+                    # new_bboxes = np.array([[left, top_min, leftmid, bottom_max], [leftmid, top_min, mid, bottom_max], [mid, top_min, rightmid, bottom_max], [rightmid, top_min, right, bottom_max]])
+                    # row_dict[key] = new_bboxes
+            bboxes = np.concatenate([row_dict[0][:,0:4], row_dict[1][:,0:4], row_dict[2][:,0:4]], axis=0)
+            standard_format = [0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11]
+            bboxes = bboxes[standard_format]
+            # print(bboxes)
+            return bboxes, 3
+    print('none!')
+    return None, None
 
 
 
@@ -295,10 +376,29 @@ def bboxes_sorting_13(bboxes, masks):
 #format = [['I', 'aVR', 'V1', 'V4'], ['II', 'aVL', 'V2', 'V5'], ['III', 'aVF', 'V3', 'V6'], ['II']] # format is hardcoded for now
 #format = ['I', 'aVR', 'V1', 'V4', 'II', 'aVL', 'V2', 'V5', 'III', 'aVF', 'V3', 'V6']
 #fullmode = 'II'
-
+import matplotlib.pyplot as plt
 def crop_from_bbox(bbox, mask, mV_pixel):
     bbox = bbox.astype(int)
+    # draw bbox on to the mask and save it
+    # Assuming mask and bbox are defined
+    # mask = (mask * 255).astype(np.uint8)
+
+    # # Convert grayscale mask to RGB to draw a colored rectangle
+    # mask_rgb = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB)
+
+    # # Draw rectangle on the RGB image
+    # cv2.rectangle(mask_rgb, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (255, 0, 0), 2)
+
+    # Display the image
+    # plt.imshow(mask_rgb)
+    # plt.title(f'bbox: {bbox}')
+    # plt.savefig('bbox.png')
+    # plt.show()
     ecg_segment = mask[bbox[1]:bbox[3]+1, bbox[0]:bbox[2]+1]
+    if np.sum(ecg_segment, axis=1).all() == 0:
+        warnings.warn("All empty in ecg segment, wrong bbox", UserWarning)
+        # raise ValueError("All empty in ecg segment, wrong bbox")
+        # return np.zeros(ecg_segment.shape[1])
 
     weighting_matrix = np.linspace((bbox[3] - bbox[1])*mV_pixel/2, -1*(bbox[3] - bbox[1])*mV_pixel/2, num=ecg_segment.shape[0]).reshape(-1, 1)
     weighted_ecg_segment = ecg_segment * weighting_matrix
@@ -329,69 +429,105 @@ def crop_from_bbox(bbox, mask, mV_pixel):
 #     return signal
 
 
-def readOut(header_path, masks, bboxes, mV_pixel):
+def readOut(num_samples, masks, nrows, bboxes, mV_pixel):
+    
+    if nrows == 4:
+        signals_np = np.full((12, num_samples), np.nan)
+        for i in range(12):
+            signal = crop_from_bbox(bboxes[i], masks[i], mV_pixel)
+            
+            signal = interpolate_nan(signal) - np.mean(signal)
+            signal = np.clip(signal, -2, 2)
+            signallen = num_samples if i == 1 else num_samples // 4
+            start_idx = (num_samples // 4) * (i // 3)
+            end_idx = start_idx + signallen
+            if len(signal) < 5:
+                signal = np.zeros(signallen)
+            signal = apply_savgol_filter(signal)
+            signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
+            signals_np[i, start_idx:end_idx] = signal
 
     
-    with open(header_path, 'r') as f:
-        input_header = f.read()
-
-    num_samples = get_num_samples(input_header)
-
-    # case 1: less than 12 boxes, return empty signals
-    # assert bboxes.shape[0] == masks.shape[0], f"Expected shape {bboxes.shape[0]}, got {masks.shape[0]}"
-    if bboxes.shape[0] < 12:
-        # failed to detect 12 leads
-        empty_signals_np = np.full((12, num_samples), np.nan)
-        lead_length = num_samples // 4
-        empty_signals_np[0:3,0:lead_length] = 0
-        empty_signals_np[3:6,lead_length:2*lead_length] = 0
-        empty_signals_np[6:9,2*lead_length:3*lead_length] = 0
-        empty_signals_np[9:12,3*lead_length:4*lead_length] = 0
-        return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
-        
-    # case 2: 12 bboxes, filter boxes
-    if bboxes.shape[0] == 12:
-        bboxes, masks = bboxes_sorting_12(bboxes, masks)
+    elif nrows == 3:
         signals_np = np.full((12, num_samples), np.nan)
         for i in range(bboxes.shape[0]):
             signal = crop_from_bbox(bboxes[i], masks[i], mV_pixel)
             signal = interpolate_nan(signal) - np.mean(signal)
             signal = np.clip(signal, -2, 2)
             signallen = num_samples // 4
-            signal = apply_savgol_filter(signal)
+            # signal = apply_savgol_filter(signal)
             signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
             start_idx = (num_samples // 4) * (i // 3)
-            end_idx = start_idx + (num_samples // 4)
+            end_idx = start_idx + signallen
             signals_np[i, start_idx:end_idx] = signal
-        signals_np = np.clip(signals_np, -2, 2)
-        return signals_np.T if signals_np.shape[1] > signals_np.shape[0] else signals_np
-
-
-
-    # case 3: at least 13 bboxes
-    if bboxes.shape[0] >= 13:
-        bboxes, masks = bboxes_sorting_13(bboxes, masks)
-        signals_np = np.full((12, num_samples), np.nan)
-
-        for i in range(12):
-            signal = crop_from_bbox(bboxes[i], masks[i], mV_pixel)   
-            if np.isnan(signal).all():
-                warnings.warn(f"Signal {i} is all nan", UserWarning)
-                signal = np.zeros_like(signal)
-            signal = interpolate_nan(signal) - np.mean(signal)
-            signal = np.clip(signal, -2, 2)
-            signallen = num_samples if i == 1 else num_samples // 4
-            signal = apply_savgol_filter(signal)
-            signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
             
-            if i == 1:
-                signals_np[i] = signal
-            else:
-                start_idx = (num_samples // 4) * (i // 3)
-                end_idx = start_idx + (num_samples // 4)
-                signals_np[i, start_idx:end_idx] = signal
+    
+    signals_np = np.clip(signals_np, -2, 2)
+    return signals_np.T if signals_np.shape[1] > signals_np.shape[0] else signals_np
+    
 
-        return signals_np.T if signals_np.shape[1] > signals_np.shape[0] else signals_np
+    
+    
+        
+        
+    
+    # # case 1: less than 12 boxes, return empty signals
+    # # assert bboxes.shape[0] == masks.shape[0], f"Expected shape {bboxes.shape[0]}, got {masks.shape[0]}"
+    # if bboxes.shape[0] < 12:
+    #     # failed to detect 12 leads
+    #     empty_signals_np = np.full((12, num_samples), np.nan)
+    #     lead_length = num_samples // 4
+    #     empty_signals_np[0:3,0:lead_length] = 0
+    #     empty_signals_np[3:6,lead_length:2*lead_length] = 0
+    #     empty_signals_np[6:9,2*lead_length:3*lead_length] = 0
+    #     empty_signals_np[9:12,3*lead_length:4*lead_length] = 0
+    #     return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
+        
+    # # case 2: 12 bboxes, filter boxes
+    # if bboxes.shape[0] == 12:
+    #     bboxes, masks = bboxes_sorting_12(bboxes, masks)
+    #     signals_np = np.full((12, num_samples), np.nan)
+    #     for i in range(bboxes.shape[0]):
+    #         signal = crop_from_bbox(bboxes[i], masks[i], mV_pixel)
+    #         signal = interpolate_nan(signal) - np.mean(signal)
+    #         signal = np.clip(signal, -2, 2)
+    #         signallen = num_samples // 4
+    #         # signal = apply_savgol_filter(signal)
+    #         signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
+    #         start_idx = (num_samples // 4) * (i // 3)
+    #         end_idx = start_idx + (num_samples // 4)
+    #         signals_np[i, start_idx:end_idx] = signal
+    #     signals_np = np.clip(signals_np, -2, 2)
+    #     return signals_np.T if signals_np.shape[1] > signals_np.shape[0] else signals_np
+
+
+
+    # # case 3: at least 13 bboxes
+    # if bboxes.shape[0] >= 13:
+    #     bboxes, masks = bboxes_sorting_13(bboxes, masks)
+    #     signals_np = np.full((12, num_samples), np.nan)
+
+    #     for i in range(12):
+    #         signal = crop_from_bbox(bboxes[i], masks[i], mV_pixel)   
+    #         if np.isnan(signal).all():
+    #             warnings.warn(f"Signal {i} is all nan", UserWarning)
+    #             signal = np.zeros_like(signal)
+    #         signal = interpolate_nan(signal) - np.mean(signal)
+    #         signal = np.clip(signal, -2, 2)
+    #         signallen = num_samples if i == 1 else num_samples // 4
+    #         if len(signal) < 5:
+    #             signal = np.zeros(signallen)
+    #         signal = apply_savgol_filter(signal)
+    #         signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
+            
+    #         if i == 1:
+    #             signals_np[i] = signal
+    #         else:
+    #             start_idx = (num_samples // 4) * (i // 3)
+    #             end_idx = start_idx + (num_samples // 4)
+    #             signals_np[i, start_idx:end_idx] = signal
+
+        # return signals_np.T if signals_np.shape[1] > signals_np.shape[0] else signals_np
 
 
 
@@ -444,7 +580,7 @@ def generate_data(data_folder, model_folder, verbose):
             if args.max_num_images != -1 and i >= args.max_num_images:
                 break
 
-def prepare_data_for_training(data_folder, model_folder=None, verbose=False):
+def prepare_data_for_training(data_folder, verbose=False):
 
     def binary_mask_to_rle_np(binary_mask):
         # Create a copy of the original mask
@@ -614,6 +750,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         self.config = None#os.path.join(work_dir, "maskrcnn_res101.py")
         self.model = None
         self.unet = None
+        self.mmseg = None
 
 
     @classmethod
@@ -623,12 +760,16 @@ class OurDigitizationModel(AbstractDigitizationModel):
         # instance.work_dir = model_folder
         instance.config = os.path.join(model_folder, "maskrcnn_res101.py")
         # Construct checkpoint path based on the model_folder parameter
-        maskrcnn_checkpoint_file = os.path.join(model_folder, 'epoch_12.pth')
+        maskrcnn_checkpoint_file = os.path.join(model_folder, 'epoch_15.pth')
 
         # Initialize the model using instance-specific variables
+        # load model parameters from json file
+        with open(os.path.join(model_folder, 'ecg_params.json'), 'r') as f:
+            ecg_params = json.load(f)['segmentation']
         instance.model = init_detector(instance.config, maskrcnn_checkpoint_file, device=dev)
-        instance.unet = ECGPredictor('resunet10', os.path.join(model_folder,'segmentation/segmentation_model.pth'), size=208, cbam=False)
-
+        # instance.model = 
+        instance.unet = ECGPredictor('resunet10', os.path.join(model_folder,'segmentation/segmentation_model.pth'), size=ecg_params['crop'], cbam=ecg_params['cbam'])
+        # instance.mmseg = init_model(config='/scratch/hshang/moody/mmsegmentation_MINS/demo/deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive-ecg.py', checkpoint='/scratch/hshang/moody/mmsegmentation_MINS/demo/work_dirs/ECG/iter_400.pth', device=dev)
         if verbose:
             print(f"Model loaded from {maskrcnn_checkpoint_file}")
 
@@ -668,21 +809,42 @@ class OurDigitizationModel(AbstractDigitizationModel):
         ecg.run(
             data_dir=unet_data_dir,
             models_dir=model_folder,
-            cv=5,
+            cv=3,
             resume_training=True,
             checkpoint_path=os.path.join(model_folder, 'segmentation_base_model.pth')
         )
         
         if verbose:
             print("Segmentation model training completed.")
+    
+    # def train_mmseg_model(self, data_folder, model_folder, verbose):
+    #     classes = ('bg', 'signal')
+    #     palette = [[255,255,255], [0,0,0]]
+
+
+    #     @DATASETS.register_module()
+    #     class ECGDataset(BaseSegDataset):
+    #         METAINFO = dict(classes = classes, palette = palette)
+    #         def __init__(self, **kwargs):
+    #             super().__init__(img_suffix='.png', seg_map_suffix='.png', **kwargs)
+            
+    #     # from mmengine import Config
+    #     cfg = Config.fromfile('/scratch/hshang/moody/mmsegmentation_MINS/demo/deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive-ecg.py')
+    #     # from mmengine.runner import Runner
+
+    #     runner = Runner.from_cfg(cfg)
+
+    #     runner.train()
 
     def train_model(self, data_folder, model_folder, verbose):
-        multiprocessing.set_start_method('spawn')
-        generate_data(data_folder, model_folder, verbose)
-        prepare_data_for_training(data_folder, model_folder, verbose)
-        if verbose:
-            print('Training the digitization model...')
-            print('Finding the Challenge data...')
+        
+        # multiprocessing.set_start_method('spawn')
+        # generate_data(data_folder, model_folder, verbose)
+        # prepare_data_for_training(data_folder, verbose)
+        # self.train_segmentation_model(data_folder, model_folder, verbose)
+        # if verbose:
+        #     print('Training the digitization model...')
+        #     print('Finding the Challenge data...')
 
         # Reduce the number of repeated compilations and improve
         # training speed.
@@ -727,41 +889,23 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
         cfg.optim_wrapper.type = 'AmpOptimWrapper'
         cfg.optim_wrapper.loss_scale = 'dynamic'
-        
+        self.train_detection_model(cfg, model_folder, verbose)
         
 
-        # Start the training in separate threads
-        detection_thread = multiprocessing.Process(target=self.train_detection_model, args=(cfg, model_folder, verbose))
-        segmentation_thread = multiprocessing.Process(target=self.train_segmentation_model, args=(data_folder, model_folder, verbose))
+        # # Start the training in separate threads
+        # detection_thread = multiprocessing.Process(target=self.train_detection_model, args=(cfg, model_folder, verbose))
+        # segmentation_thread = multiprocessing.Process(target=self.train_segmentation_model, args=(data_folder, model_folder, verbose))
     
-        detection_thread.start()
-        segmentation_thread.start()
+        # detection_thread.start()
+        # segmentation_thread.start()
 
-        # Wait for both threads to complete
-        detection_thread.join()
-        segmentation_thread.join()
+        # # Wait for both threads to complete
+        # detection_thread.join()
+        # segmentation_thread.join()
 
-        if verbose:
-            print("Both detection and segmentation models have been trained.")
+        # if verbose:
+        #     print("Both detection and segmentation models have been trained.")
         
-    def inferece_image(self, image_path, verbose):
-        img = mmcv.imread(image_path,channel_order='rgb')
-        result = inference_detector(self.model, img)
-        result_dict = result.to_dict()
-        pred = result_dict['pred_instances']
-        bboxes = pred['bboxes'].to(torch.int).cpu().detach().numpy()
-        # check if pred has masks 
-        masks = np.zeros((bboxes.shape[0], img.shape[0], img.shape[1]))
-        if 'masks' in pred:
-            masks = pred['masks'].cpu().detach().numpy()
-        scores = pred['scores'].cpu().detach().numpy()
-        labels = pred['labels'].cpu().detach().numpy()
-        bboxes, labels, scores, masks = filter_boxes(bboxes, labels, scores, masks)
-        image = img/255.0
-        bboxes, masks = bboxes_sorting_13(bboxes, masks)
-        to_be_readout = self.unet.run(image, bboxes, 0)
-        
-        return to_be_readout
 
     
     def run_digitization_model(self, record, verbose):
@@ -785,9 +929,9 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
         img = mmcv.imread(img_path,channel_order='rgb')
         # remove image gradient
-        img = remove_image_gradients(img)
-        mmcv.imwrite(img, os.path.join(record, 'processed.png'))
-        result = inference_detector(self.model, img)
+        img_no_grad = remove_image_gradients(img)
+        mmcv.imwrite(img_no_grad, os.path.join(record, 'processed.png'))
+        result = inference_detector(self.model, img_no_grad)
         result_dict = result.to_dict()
         pred = result_dict['pred_instances']
         bboxes = pred['bboxes'].to(torch.int).cpu().detach().numpy()
@@ -810,18 +954,49 @@ class OurDigitizationModel(AbstractDigitizationModel):
         image = img/255.0
         # assert bboxes.shape == (13, 4), f"Expected shape (13, 4), got {bboxes.shape}"
         
-        # enlarge the bboxes by n pixels
-        n = 0
-        # bboxes[:, 0] = np.maximum(bboxes[:, 0] - n, 0)
-        # bboxes[:, 1] = np.maximum(bboxes[:, 1] - n, 0)
-        # bboxes[:, 2] = np.minimum(bboxes[:, 2] + n, img.shape[1])
-        # bboxes[:, 3] = np.minimum(bboxes[:, 3] + n, img.shape[0])
+        
+        # cfg = Config.fromfile('/scratch/hshang/moody/mmsegmentation_MINS/demo/deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive-ecg.py')
+        # # Init the model from the config and the checkpoint
+        # checkpoint_path = '/scratch/hshang/moody/mmsegmentation_MINS/demo/work_dirs/ECG/iter_400.pth'
 
+        # Load models into memory
+        # inferencer = MMSegInferencer(model=cfg, weights=checkpoint_path)
+        # Inference
+        # crop the images with the bboxes and put them into an array
+        # to_be_readout = np.zeros((image.shape[0], image.shape[1], len(bboxes)))
+        # print(to_be_readout.shape)
+        # for i, (x1, y1, x2, y2) in enumerate(bboxes):
+        #     lead = img[y1:y2, x1:x2, :]
+        #     cv2.imwrite(f'lead_{i}.png', lead)
+        #     # print(lead.shape)
+        #     # result = inferencer(lead)['predictions']
 
+        #     result = inference_model(self.mmseg, lead)
+        #     print(result.keys())
+        #     cv2.imwrite(f'leadout_{i}.png', result)
+        #     # print(result.shape)
+        #     to_be_readout[y1:y2, x1:x2, i] = result
+        mV_pixel = (25.4 *8.5*0.5)/(masks[0].shape[0]*5) #hardcoded for now
+        # # mV_pixel = (1.5*25.4 *8.5*0.5)/(masks[0].shape[0]*5)
+        header_path = hc.get_header_file(record)
+        with open(header_path, 'r') as f:
+            input_header = f.read()
 
-        to_be_readout = self.unet.run(image, bboxes, n) # float
-        # shrink the masks back to original size
-        # to_be_readout = to_be_readout[:, n:-n, n:-n]
+        num_samples = get_num_samples(input_header)
+        
+        sorted_bboxes, nrows = bboxes_sorting(bboxes, masks.shape[1])
+        if sorted_bboxes is None:
+            # failed to detect leads
+            empty_signals_np = np.full((12, num_samples), np.nan)
+            lead_length = num_samples // 4
+            empty_signals_np[0:3,0:lead_length] = 0
+            empty_signals_np[3:6,lead_length:2*lead_length] = 0
+            empty_signals_np[6:9,2*lead_length:3*lead_length] = 0
+            empty_signals_np[9:12,3*lead_length:4*lead_length] = 0
+            return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
+        
+        to_be_readout = self.unet.run(image, sorted_bboxes.astype(int)) # float
+
         to_be_readout = np.where(to_be_readout > 0.5, True, False)
         # print(min(to_be_readout[0]), max(to_be_readout[0]))
         # assert len(to_be_readout) == 13, f"Expected 13 signals, got {len(to_be_readout)}"
@@ -831,15 +1006,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
         
         # assert to_be_readout.shape == masks.shape, f"Expected shape {masks.shape}, got {to_be_readout.shape}"
         # assert to_be_readout.shape[0] == 13, f"Expected 13 signals, got {to_be_readout.shape[0]}"
-        # if masks.shape[0] < 13:
-        #     # add empty masks
-        #     empty_masks = np.zeros((13 - masks.shape[0], masks.shape[1], masks.shape[2]))
-        #     masks = np.append(masks, empty_masks, axis=0)
-        # to_be_readout = to_be_readout + masks
         
-        mV_pixel = (25.4 *8.5*0.5)/(masks[0].shape[0]*5) #hardcoded for now
-        # # mV_pixel = (1.5*25.4 *8.5*0.5)/(masks[0].shape[0]*5)
-        header_path = hc.get_header_file(record)
+        
 
         # load gt masks for debuging:
         # Get directory and image name
@@ -888,9 +1056,11 @@ class OurDigitizationModel(AbstractDigitizationModel):
         # signal=readOut(header_path, masks, bboxes, mV_pixel)
         
         print('dumping pred')
-        signal=readOut(header_path, to_be_readout, bboxes, mV_pixel)
+        
+        signal=readOut(num_samples, to_be_readout, nrows, sorted_bboxes, mV_pixel)
+        
 
-        to_dump = {'bboxes': bboxes, 'masks': to_be_readout, 'scores': scores, 'labels': labels, 'record': record}
+        to_dump = {'bboxes': sorted_bboxes, 'masks': to_be_readout, 'scores': scores, 'labels': labels, 'record': record, 'nrows': nrows, 'signal_est':signal}
         with open('to_dump.pkl', 'wb') as f:
             pickle.dump(to_dump, f)
 

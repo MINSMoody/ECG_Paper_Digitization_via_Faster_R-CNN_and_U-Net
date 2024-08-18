@@ -1,10 +1,10 @@
 auto_scale_lr = dict(base_batch_size=16, enable=False)
 backend_args = None
-data_root = '/scratch/hshang/moody/final_phase_submission/training_data'
+data_root = '/scratch/hshang/moody/final_phase_submission/train_set_hr'
 dataset_type = 'CocoDataset'
 default_hooks = dict(
     checkpoint=dict(interval=3, type='CheckpointHook'),
-    logger=dict(interval=10, type='LoggerHook'),
+    logger=dict(interval=100, type='LoggerHook'),
     param_scheduler=dict(type='ParamSchedulerHook'),
     sampler_seed=dict(type='DistSamplerSeedHook'),
     timer=dict(type='IterTimerHook'),
@@ -108,11 +108,11 @@ model = dict(
     rpn_head=dict(
         anchor_generator=dict(
             ratios=[
+                0.1,
                 0.3,
                 0.5,
                 1.0,
                 2.0,
-                3.0,
             ],
             scales=[
                 8,
@@ -192,7 +192,7 @@ model = dict(
                 pos_fraction=0.6,
                 type='RandomSampler')),
         rpn_proposal=dict(
-            max_per_img=150,
+            max_per_img=200,
             min_bbox_size=10,
             nms=dict(iou_threshold=0.6, type='nms'),
             nms_pre=500)),
@@ -286,7 +286,7 @@ test_pipeline = [
         ),
         type='PackDetInputs'),
 ]
-train_cfg = dict(max_epochs=12, type='EpochBasedTrainLoop', val_interval=3)
+train_cfg = dict(max_epochs=15, type='EpochBasedTrainLoop', val_interval=3)
 train_dataloader = dict(
     batch_sampler=dict(type='AspectRatioBatchSampler'),
     batch_size=1,
@@ -294,7 +294,7 @@ train_dataloader = dict(
         ann_file='annotation_coco.json',
         backend_args=None,
         data_prefix=dict(img=''),
-        data_root='/scratch/hshang/moody/final_phase_submission/training_data',
+        data_root='/scratch/hshang/moody/final_phase_submission/train_set_hr',
         filter_cfg=dict(filter_empty_gt=True, min_size=32),
         metainfo=dict(classes=('ecg_lead', ), palette=[
             (

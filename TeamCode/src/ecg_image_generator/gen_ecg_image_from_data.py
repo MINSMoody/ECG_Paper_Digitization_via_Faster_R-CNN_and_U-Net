@@ -97,30 +97,32 @@ def writeCSV(args):
             writer = csv.writer(gridsize_file)
             if args.start_index != -1:
                 writer.writerow(["filename","xgrid","ygrid","lead_name","start","end"])
+                
+# def 
 
-def remove_image_gradients(image_array, filename):
-   # Step 2: Split the image into R, G, B channels
-    if image_array.shape[2] == 4:
-        b_channel, g_channel, r_channel, a_channel = cv2.split(image_array)
-    elif image_array.shape[2] == 3:
-        b_channel, g_channel, r_channel = cv2.split(image_array)
-        a_channel = np.ones_like(b_channel) * 255
-    else: return image_array
+# def remove_image_gradients(image_array, filename):
+#    # Step 2: Split the image into R, G, B channels
+#     if image_array.shape[2] == 4:
+#         b_channel, g_channel, r_channel, a_channel = cv2.split(image_array)
+#     elif image_array.shape[2] == 3:
+#         b_channel, g_channel, r_channel = cv2.split(image_array)
+#         a_channel = np.ones_like(b_channel) * 255
+#     else: return image_array
 
-    # Step 3: Apply Laplacian filter to each channel
-    laplacian_b = cv2.Laplacian(b_channel, cv2.CV_64F)
-    laplacian_g = cv2.Laplacian(g_channel, cv2.CV_64F)
-    laplacian_r = cv2.Laplacian(r_channel, cv2.CV_64F)
+#     # Step 3: Apply Laplacian filter to each channel
+#     laplacian_b = cv2.Laplacian(b_channel, cv2.CV_64F)
+#     laplacian_g = cv2.Laplacian(g_channel, cv2.CV_64F)
+#     laplacian_r = cv2.Laplacian(r_channel, cv2.CV_64F)
 
-    # Convert the result back to uint8 (8-bit image) because Laplacian can result in negative values
-    laplacian_b = cv2.convertScaleAbs(laplacian_b)
-    laplacian_g = cv2.convertScaleAbs(laplacian_g)
-    laplacian_r = cv2.convertScaleAbs(laplacian_r)
+#     # Convert the result back to uint8 (8-bit image) because Laplacian can result in negative values
+#     laplacian_b = cv2.convertScaleAbs(laplacian_b)
+#     laplacian_g = cv2.convertScaleAbs(laplacian_g)
+#     laplacian_r = cv2.convertScaleAbs(laplacian_r)
 
-    # Step 4: Merge the channels back together
-    laplacian_rgb = cv2.merge((laplacian_b, laplacian_g, laplacian_r, a_channel))
-    cv2.imwrite(filename, laplacian_rgb)
-    return filename
+#     # Step 4: Merge the channels back together
+#     laplacian_rgb = cv2.merge((laplacian_b, laplacian_g, laplacian_r, a_channel))
+#     cv2.imwrite(filename, laplacian_rgb)
+#     return filename
 
 def run_single_file(args):
         if hasattr(args, 'st') == True:
@@ -129,7 +131,7 @@ def run_single_file(args):
 
         filename = args.input_file
         header = args.header_file
-        resolution = random.choice(range(100,args.resolution+1)) if (args.random_resolution) else args.resolution
+        resolution = random.choice(range(180,args.resolution+1)) if (args.random_resolution) else args.resolution
         padding = random.choice(range(0,args.pad_inches+1)) if (args.random_padding) else args.pad_inches
         
         papersize = ''
@@ -192,15 +194,28 @@ def run_single_file(args):
                 json_dict['x_offset_for_handwritten_text'] = x_offset
                 json_dict['y_offset_for_handwritten_text'] = y_offset
                 
-            add_wrinkeles = np.random.choice([True, False], p=[0.25, 0.75])
-            if(wrinkles and add_wrinkeles):
-                ifWrinkles = True
-                ifCreases = True
-                crease_angle = args.crease_angle if (args.deterministic_angle) else random.choice(range(0,args.crease_angle+1))
-                num_creases_vertically = args.num_creases_vertically if (args.deterministic_vertical) else random.choice(range(1,args.num_creases_vertically+1))
-                num_creases_horizontally = args.num_creases_horizontally if (args.deterministic_horizontal) else random.choice(range(1,args.num_creases_horizontally+1))
-                out = get_creased(out,output_directory=args.output_directory,ifWrinkles=ifWrinkles,ifCreases=ifCreases,crease_angle=crease_angle,num_creases_vertically=num_creases_vertically,num_creases_horizontally=num_creases_horizontally,bbox = args.lead_bbox)
-                
+            # Determine whether to add wrinkles and/or creases
+            add_wrinkles = np.random.random() < 0.3
+            add_creases = np.random.random() < 0.3
+
+            # Common logic for setting crease parameters
+            def get_crease_params():
+                crease_angle = args.crease_angle if args.deterministic_angle else random.choice(range(0, args.crease_angle + 1))
+                num_creases_vertically = args.num_creases_vertically if args.deterministic_vertical else random.choice(range(1, args.num_creases_vertically + 1))
+                num_creases_horizontally = args.num_creases_horizontally if args.deterministic_horizontal else random.choice(range(1, args.num_creases_horizontally + 1))
+                return crease_angle, num_creases_vertically, num_creases_horizontally
+
+            # Apply wrinkles or creases if needed
+            if wrinkles and add_wrinkles:
+                ifWrinkles, ifCreases = True, False
+                crease_angle, num_creases_vertically, num_creases_horizontally = get_crease_params()
+                out = get_creased(out, output_directory=args.output_directory, ifWrinkles=ifWrinkles, ifCreases=ifCreases, crease_angle=crease_angle, num_creases_vertically=num_creases_vertically, num_creases_horizontally=num_creases_horizontally, bbox=args.lead_bbox)
+
+            if add_creases:
+                ifWrinkles, ifCreases = False, True
+                crease_angle, num_creases_vertically, num_creases_horizontally = get_crease_params()
+                out = get_creased(out, output_directory=args.output_directory, ifWrinkles=ifWrinkles, ifCreases=ifCreases, crease_angle=crease_angle, num_creases_vertically=num_creases_vertically, num_creases_horizontally=num_creases_horizontally, bbox=args.lead_bbox)
+
                 
             else:
                 crease_angle = 0
@@ -213,8 +228,8 @@ def run_single_file(args):
                 json_dict['number_of_creases_horizontally'] = num_creases_horizontally
                 json_dict['number_of_creases_vertically'] = num_creases_vertically
             
-            add_noise = np.random.choice([True, False], p=[0.25, 0.75])
-            if(augment and add_noise):
+            # add_noise = np.random.choice([True, False], p=[0.9, 0.1])
+            if(augment):
                 noise = args.noise if (args.deterministic_noise) else random.choice(range(1,args.noise+1))
             
                 if(not args.lead_bbox):
@@ -225,12 +240,16 @@ def run_single_file(args):
                         crop = args.crop
                 else:
                     crop = 0
-                blue_temp = np.random.choice([True,False], p=[0.25, 0.75])
+                add_tone = np.random.choice([True, False], p=[0.6, 0.4])
+                if add_tone:
+                    blue_temp = np.random.choice([True,False], p=[0.25, 0.75])
 
-                if(blue_temp):
-                    temp = random.choice(range(4000,5000))
+                    if(blue_temp):
+                        temp = random.choice(range(4000,5000))
+                    else:
+                        temp = random.choice(range(7000,9000))
                 else:
-                    temp = random.choice(range(7000,9000))
+                    temp = None
                 rotate = args.rotate
                 out = get_augment(out,output_directory=args.output_directory,rotate=args.rotate,noise=noise,crop=crop,temperature=temp,bbox = args.lead_bbox, store_text_bounding_box = args.lead_name_bbox, json_dict = json_dict)
             
@@ -239,7 +258,8 @@ def run_single_file(args):
                 temp = 0
                 rotate = 0
                 noise = 0
-            out = remove_image_gradients(np.array(Image.open(out)), out)
+            # graident removal
+            # out = remove_image_gradients(np.array(Image.open(out)), out)
             if args.store_config == 2:
                 json_dict['augment'] = bool(augment)
                 json_dict['crop'] = crop
