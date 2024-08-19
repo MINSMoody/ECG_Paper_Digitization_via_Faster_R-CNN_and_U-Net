@@ -286,7 +286,7 @@ test_pipeline = [
         ),
         type='PackDetInputs'),
 ]
-train_cfg = dict(max_epochs=15, type='EpochBasedTrainLoop', val_interval=3)
+train_cfg = dict(max_epochs=24, type='EpochBasedTrainLoop', val_interval=3)
 train_dataloader = dict(
     batch_sampler=dict(type='AspectRatioBatchSampler'),
     batch_size=1,
