@@ -10,12 +10,13 @@ import cv2
 import pickle
 
 # from mmseg.registry import DATASETS
-# from mmseg.datasets import BaseSegDataset
-# from mmseg.apis import MMSegInferencer
-from mmengine import Registry
 
-# from mmdet.apis import DetInferencer
+from mmengine import Registry
+# from mmseg.datasets import BaseSegDataset
 # from mmseg.apis import init_model, inference_model
+# from mmseg.apis import show_result_pyplot
+
+
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -47,10 +48,14 @@ import numpy as np
 from mmcv import imread, imwrite
 import mmengine
 from tqdm.auto import tqdm
+import shutil
 
 
 from pycocotools import mask as maskutils
 import random
+
+import pywt
+import numpy as np
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' 
 warnings.filterwarnings("ignore")
@@ -73,16 +78,6 @@ elif device == 'gpu':
 def nan_helper(y):
     return np.isnan(y), lambda z: z.nonzero()[0]
 
-# def interpolate_nan(signal):
-#     if np.isnan(signal[0]):
-#         signal[0] = 0
-#     if np.isnan(signal[-1]):
-#         signal[-1] = 0
-#     nans, x = nan_helper(signal)
-#     if len(nans) == 0:
-#         return signal
-#     signal[nans] = np.interp(x(nans), x(~nans), signal[~nans])
-#     return signal
 
 from scipy.interpolate import CubicSpline
 
@@ -267,30 +262,47 @@ from scipy.signal import savgol_filter
 def apply_savgol_filter(signal):
     return savgol_filter(signal, window_length=5, polyorder=3)  # Adjust parameters as needed
 
-def bboxes_sorting(bboxes, img_width): # input: bboxes output by maskrcnn
-    # print(bboxes)
-    # first sort by H
-    bboxes_avg_H = (bboxes[:,1]+bboxes[:,3])/2
-    bboxes_avg_W = (bboxes[:,0]+bboxes[:,2])/2
-    bboxes = np.append(bboxes, bboxes_avg_H.reshape((-1,1)), axis=1)
-    bboxes = np.append(bboxes, bboxes_avg_W.reshape((-1,1)), axis=1)
+def bboxes_sorting(bboxes, img_width): 
+    # Validate input
+    if not isinstance(bboxes, np.ndarray) or bboxes.ndim != 2 or bboxes.shape[1] < 4:
+        print('Invalid input')
+        return None, None
+    
+    if len(bboxes) == 0:
+        print('Empty input')
+        return None, None
+
+    # Calculate average height and width
+    bboxes_avg_H = (bboxes[:,1] + bboxes[:,3]) / 2
+    bboxes_avg_W = (bboxes[:,0] + bboxes[:,2]) / 2
+    
+    # Append these to bboxes
+    bboxes = np.append(bboxes, bboxes_avg_H.reshape((-1, 1)), axis=1)
+    bboxes = np.append(bboxes, bboxes_avg_W.reshape((-1, 1)), axis=1)
+    
+    # Sort by height (H)
     sortH_idx = bboxes[:, 4].argsort()
     bboxes = bboxes[sortH_idx]
 
-    row_dict, row_dict_numcol = group_bboxes_row(bboxes, vertical_distance_threshold = img_width/10)
+    # Grouping function (assuming it's defined elsewhere)
+    row_dict, row_dict_numcol = group_bboxes_row(bboxes, vertical_distance_threshold=img_width/10)
+    
     if len(row_dict) == 4:
         ncol = max(list(row_dict_numcol.values()))
-        if ncol == 4:
-            print('row=4, col=4')
-            ## step 1, adjust the bboxes
-            rowswith4cols = [k for k,v in row_dict_numcol.items() if int(v) == 4]           
-            left = min([np.min(row_dict[row][:,0]) for row in rowswith4cols])
-            right = max([np.max(row_dict[row][:,2]) for row in rowswith4cols])
-            leadwidth = (right - left)/4
+        if ncol >= 4:
+            print('row=4, col>=4')
+            
+            rowswith4cols = [k for k, v in row_dict_numcol.items() if int(v) == 4]           
+            if rowswith4cols:
+                left = min([np.min(row_dict[row][:,0]) for row in rowswith4cols if len(row_dict[row]) > 0])
+                right = max([np.max(row_dict[row][:,2]) for row in rowswith4cols if len(row_dict[row]) > 0])
+            leadwidth = (right - left) / 4 if right != left else 1  # Prevent division by zero
+            
             leftmid = left + leadwidth
-            mid = left + 2*leadwidth
-            rightmid = left + 3*leadwidth
-            for key in [0,1,2]:
+            mid = left + 2 * leadwidth
+            rightmid = left + 3 * leadwidth
+            
+            for key in [0, 1, 2]:
                 if row_dict_numcol[key] == 4:
                     row_dict[key] = row_dict[key][row_dict[key][:,5].argsort()]
                     row_dict[key][0,0] = left
@@ -302,69 +314,91 @@ def bboxes_sorting(bboxes, img_width): # input: bboxes output by maskrcnn
                     row_dict[key][3,0] = rightmid
                     row_dict[key][3,2] = right
                 else:
-                    new_bboxes = np.nan*np.ones((4,4))
+                    new_bboxes = np.nan * np.ones((4, 4))
                     for i in range(row_dict[key].shape[0]):
-                        h, w = row_dict[key][i,4:6]
+                        h, w = row_dict[key][i, 4:6]
                         if w < leftmid:
-                            new_bboxes[0] = [left, row_dict[key][i,1], leftmid, row_dict[key][i,3]]
+                            new_bboxes[0] = [left, row_dict[key][i, 1], leftmid, row_dict[key][i, 3]]
                         elif w < mid:
-                            new_bboxes[1] = [leftmid, row_dict[key][i,1], mid, row_dict[key][i,3]]
+                            new_bboxes[1] = [leftmid, row_dict[key][i, 1], mid, row_dict[key][i, 3]]
                         elif w < rightmid:
-                            new_bboxes[2] = [mid, row_dict[key][i,1], rightmid, row_dict[key][i,3]]
-                        else:
-                            new_bboxes[3] = [rightmid, row_dict[key][i,1], right, row_dict[key][i,3]]
+                            new_bboxes[2] = [mid, row_dict[key][i, 1], rightmid, row_dict[key][i, 3]]
+                        elif w < right:
+                            new_bboxes[3] = [rightmid, row_dict[key][i, 1], right, row_dict[key][i, 3]]
                     row_dict[key] = new_bboxes
-                    
-            row_dict[3][0,0] = row_dict[3][0,0] if row_dict[3][0,0] < left else left
-            row_dict[3][0,2] = row_dict[3][0,2] if row_dict[3][0,2] > right else right
-            bboxes = np.concatenate([row_dict[0][:,0:4], row_dict[1][:,0:4], row_dict[2][:,0:4], row_dict[3][:,0:4]], axis=0)
+            
+            row_dict[3][0, 0] = min(row_dict[3][0, 0], left)
+            row_dict[3][0, 2] = max(row_dict[3][0, 2], right)
+            
+            bboxes = np.concatenate([row_dict[0][:, 0:4], row_dict[1][:, 0:4], row_dict[2][:, 0:4], row_dict[3][:, 0:4]], axis=0)
+            
             standard_format = [0, 12, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11]
+            if bboxes.shape[0] != 13:
+                print('none!')
+                return None, None
+            
             bboxes = bboxes[standard_format]
-            # print(bboxes)
+            if len(bboxes) != 12:
+                print(f'Unexpected number of bounding boxes: {len(bboxes)}')
+                return None, None
+
             return bboxes, 4
-    if len(row_dict) == 3:
+    
+    elif len(row_dict) == 3:
         ncol = max(list(row_dict_numcol.values()))
-        if ncol == 4:
-            print('row=3, col=4')
-            rowswith4cols = [k for k,v in row_dict_numcol.items() if int(v) == 4]           
-            left = min([np.min(row_dict[row][:,0]) for row in rowswith4cols])
-            right = max([np.max(row_dict[row][:,2]) for row in rowswith4cols])
-            leadwidth = (right - left)/4
+        if ncol >= 4:
+            print('row=3, col>=4')
+            
+            rowswith4cols = [k for k, v in row_dict_numcol.items() if int(v) == 4]   
+            if rowswith4cols:
+                left = min([np.min(row_dict[row][:,0]) for row in rowswith4cols if len(row_dict[row]) > 0])
+                right = max([np.max(row_dict[row][:,2]) for row in rowswith4cols if len(row_dict[row]) > 0])
+
+            leadwidth = (right - left) / 4 if right != left else 1  # Prevent division by zero
+            
             leftmid = left + leadwidth
-            mid = left + 2*leadwidth
-            rightmid = left + 3*leadwidth
-            for key in [0,1,2]:
+            mid = left + 2 * leadwidth
+            rightmid = left + 3 * leadwidth
+            
+            for key in [0, 1, 2]:
                 if row_dict_numcol[key] == 4:
-                    row_dict[key] = row_dict[key][row_dict[key][:,5].argsort()]
-                    row_dict[key][0,0] = left
-                    row_dict[key][0,2] = leftmid
-                    row_dict[key][1,0] = leftmid
-                    row_dict[key][1,2] = mid
-                    row_dict[key][2,0] = mid
-                    row_dict[key][2,2] = rightmid
-                    row_dict[key][3,0] = rightmid
-                    row_dict[key][3,2] = right
+                    row_dict[key] = row_dict[key][row_dict[key][:, 5].argsort()]
+                    row_dict[key][0, 0] = left
+                    row_dict[key][0, 2] = leftmid
+                    row_dict[key][1, 0] = leftmid
+                    row_dict[key][1, 2] = mid
+                    row_dict[key][2, 0] = mid
+                    row_dict[key][2, 2] = rightmid
+                    row_dict[key][3, 0] = rightmid
+                    row_dict[key][3, 2] = right
                 else:
-                    new_bboxes = np.nan*np.ones((4,4))
+                    new_bboxes = np.nan * np.ones((4, 4))
                     for i in range(row_dict[key].shape[0]):
-                        h, w = row_dict[key][i,4:6]
+                        h, w = row_dict[key][i, 4:6]
                         if w < leftmid:
-                            new_bboxes[0] = [left, row_dict[key][i,1], leftmid, row_dict[key][i,3]]
+                            new_bboxes[0] = [left, row_dict[key][i, 1], leftmid, row_dict[key][i, 3]]
                         elif w < mid:
-                            new_bboxes[1] = [leftmid, row_dict[key][i,1], mid, row_dict[key][i,3]]
+                            new_bboxes[1] = [leftmid, row_dict[key][i, 1], mid, row_dict[key][i, 3]]
                         elif w < rightmid:
-                            new_bboxes[2] = [mid, row_dict[key][i,1], rightmid, row_dict[key][i,3]]
-                        else:
-                            new_bboxes[3] = [rightmid, row_dict[key][i,1], right, row_dict[key][i,3]]
-                    # bottom_max = np.max(row_dict[key][:,4])
-                    # top_min = np.min(row_dict[key][:,1])
-                    # new_bboxes = np.array([[left, top_min, leftmid, bottom_max], [leftmid, top_min, mid, bottom_max], [mid, top_min, rightmid, bottom_max], [rightmid, top_min, right, bottom_max]])
-                    # row_dict[key] = new_bboxes
-            bboxes = np.concatenate([row_dict[0][:,0:4], row_dict[1][:,0:4], row_dict[2][:,0:4]], axis=0)
+                            new_bboxes[2] = [mid, row_dict[key][i, 1], rightmid, row_dict[key][i, 3]]
+                        elif w < right:
+                            new_bboxes[3] = [rightmid, row_dict[key][i, 1], right, row_dict[key][i, 3]]
+                    row_dict[key] = new_bboxes
+            
+            bboxes = np.concatenate([row_dict[0][:, 0:4], row_dict[1][:, 0:4], row_dict[2][:, 0:4]], axis=0)
+            print(bboxes)
+            
             standard_format = [0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11]
+            if bboxes.shape[0] != 12:
+                print('none!')
+                return None, None
+            
             bboxes = bboxes[standard_format]
-            # print(bboxes)
+            if len(bboxes) != 12:
+                print(f'Unexpected number of bounding boxes: {len(bboxes)}')
+                return None, None
             return bboxes, 3
+    
     print('none!')
     return None, None
 
@@ -377,6 +411,7 @@ def bboxes_sorting(bboxes, img_width): # input: bboxes output by maskrcnn
 #fullmode = 'II'
 import matplotlib.pyplot as plt
 def crop_from_bbox(bbox, mask, mV_pixel):
+    
     bbox = bbox.astype(int)
     # draw bbox on to the mask and save it
     # Assuming mask and bbox are defined
@@ -427,8 +462,7 @@ def crop_from_bbox(bbox, mask, mV_pixel):
 #     signal = np.array(signal)
 #     return signal
 
-import pywt
-import numpy as np
+
 
 def wavelet_denoising(signal, wavelet='db4', level=3):
     coeffs = pywt.wavedec(signal, wavelet, level=level)
@@ -437,34 +471,49 @@ def wavelet_denoising(signal, wavelet='db4', level=3):
     denoised_coeffs = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
     return pywt.waverec(denoised_coeffs, wavelet)
 
-def readOut(num_samples, masks, nrows, bboxes, mV_pixel):
-    
+from scipy.signal import butter, lfilter
+def readOut(num_samples, masks, nrows, bboxes, mV_pixel, sampling_frequency): # one more input: sampling_frequency
     num_signals = 12
     signals_np = np.full((num_signals, num_samples), np.nan)
-
-    def process_signal(index, bboxes, masks, mV_pixel, signallen):
+    def process_signal(index, bboxes, masks, mV_pixel, signallen,sampling_frequency, filter=True):
+        if np.isnan(bboxes[index]).any():
+            return np.zeros(signallen)
         signal = crop_from_bbox(bboxes[index], masks[index], mV_pixel)
         signal = interpolate_nan(signal) - np.mean(signal)
-        
-        # signal = np.clip(signal, -2, 2)
         try :
             signal = apply_savgol_filter(signal)
-        except:
-            print('Error in savgol filter')
-        signal = wavelet_denoising(signal)
-        if len(signal) < signallen:
-            signal = upsample(signal, signallen)
-        else:
-            signal = downsample(signal, signallen)
+        except Exception as e:
+            print(f'Error in savgol filter: {e}')
+            
+        try:
+            signal = wavelet_denoising(signal)
+        except Exception as e:
+            print(f'Error in wavelet denoising: {e}')
+        try:
+            if len(signal) < signallen:
+                signal = upsample(signal, signallen)
+            else:
+                signal = downsample(signal, signallen)
+        except Exception as e:
+            print(f'Error in upsampling/downsampling: {e}')
+        # low pass filter added by Yani
+        try:
+            if filter:
+                if not np.isnan(signal).any():
+                    cutoff = sampling_frequency * 0.45  # normal ecg is 0.05Hz to around 150Hz
+                    order =6
+                    b, a = butter(order, cutoff, fs=sampling_frequency, btype='low', analog=False)
+                    signal = lfilter(b, a, signal)
+        except Exception as e:
+            print(f'Error in butter filter: {e}')
         return signal
-
     if nrows == 4:
         for i in range(num_signals):
             signallen = num_samples if i == 1 else num_samples // 4
             start_idx = (num_samples // 4) * (i // 3)
             end_idx = start_idx + signallen
             if i < len(bboxes):
-                signal = process_signal(i, bboxes, masks, mV_pixel, signallen)
+                signal = process_signal(i, bboxes, masks, mV_pixel, signallen, sampling_frequency, filter=True )
                 signals_np[i, start_idx:end_idx] = signal
             else:
                 signals_np[i, start_idx:end_idx] = np.zeros(signallen)
@@ -473,76 +522,12 @@ def readOut(num_samples, masks, nrows, bboxes, mV_pixel):
             signallen = num_samples // 4
             start_idx = (num_samples // 4) * (i // 3)
             end_idx = start_idx + signallen
-            signal = process_signal(i, bboxes, masks, mV_pixel, signallen)
+            signal = process_signal(i, bboxes, masks, mV_pixel, signallen, sampling_frequency, filter=True)
             signals_np[i, start_idx:end_idx] = signal
-    
     signals_np = np.clip(signals_np, -2, 2)
-    
     return signals_np.T if signals_np.shape[1] > signals_np.shape[0] else signals_np
     
 
-    
-    
-        
-        
-    
-    # # case 1: less than 12 boxes, return empty signals
-    # # assert bboxes.shape[0] == masks.shape[0], f"Expected shape {bboxes.shape[0]}, got {masks.shape[0]}"
-    # if bboxes.shape[0] < 12:
-    #     # failed to detect 12 leads
-    #     empty_signals_np = np.full((12, num_samples), np.nan)
-    #     lead_length = num_samples // 4
-    #     empty_signals_np[0:3,0:lead_length] = 0
-    #     empty_signals_np[3:6,lead_length:2*lead_length] = 0
-    #     empty_signals_np[6:9,2*lead_length:3*lead_length] = 0
-    #     empty_signals_np[9:12,3*lead_length:4*lead_length] = 0
-    #     return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
-        
-    # # case 2: 12 bboxes, filter boxes
-    # if bboxes.shape[0] == 12:
-    #     bboxes, masks = bboxes_sorting_12(bboxes, masks)
-    #     signals_np = np.full((12, num_samples), np.nan)
-    #     for i in range(bboxes.shape[0]):
-    #         signal = crop_from_bbox(bboxes[i], masks[i], mV_pixel)
-    #         signal = interpolate_nan(signal) - np.mean(signal)
-    #         signal = np.clip(signal, -2, 2)
-    #         signallen = num_samples // 4
-    #         # signal = apply_savgol_filter(signal)
-    #         signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
-    #         start_idx = (num_samples // 4) * (i // 3)
-    #         end_idx = start_idx + (num_samples // 4)
-    #         signals_np[i, start_idx:end_idx] = signal
-    #     signals_np = np.clip(signals_np, -2, 2)
-    #     return signals_np.T if signals_np.shape[1] > signals_np.shape[0] else signals_np
-
-
-
-    # # case 3: at least 13 bboxes
-    # if bboxes.shape[0] >= 13:
-    #     bboxes, masks = bboxes_sorting_13(bboxes, masks)
-    #     signals_np = np.full((12, num_samples), np.nan)
-
-    #     for i in range(12):
-    #         signal = crop_from_bbox(bboxes[i], masks[i], mV_pixel)   
-    #         if np.isnan(signal).all():
-    #             warnings.warn(f"Signal {i} is all nan", UserWarning)
-    #             signal = np.zeros_like(signal)
-    #         signal = interpolate_nan(signal) - np.mean(signal)
-    #         signal = np.clip(signal, -2, 2)
-    #         signallen = num_samples if i == 1 else num_samples // 4
-    #         if len(signal) < 5:
-    #             signal = np.zeros(signallen)
-    #         signal = apply_savgol_filter(signal)
-    #         signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
-            
-    #         if i == 1:
-    #             signals_np[i] = signal
-    #         else:
-    #             start_idx = (num_samples // 4) * (i // 3)
-    #             end_idx = start_idx + (num_samples // 4)
-    #             signals_np[i, start_idx:end_idx] = signal
-
-        # return signals_np.T if signals_np.shape[1] > signals_np.shape[0] else signals_np
 
 
 
@@ -561,8 +546,8 @@ def process_single_file(full_header_file, full_recording_file, args, original_ou
 
     return run_single_file(args)
 
-def generate_data(data_folder, model_folder, data_amount, verbose):
-    with open(os.path.join(model_folder, 'data_format.json'), 'r') as f:
+def generate_data(data_folder, config_folder, data_amount, verbose):
+    with open(os.path.join(config_folder, 'data_format.json'), 'r') as f:
         args_dict = json.load(f)
     args = Namespace(**args_dict)
     random.seed(args.seed)
@@ -584,21 +569,28 @@ def generate_data(data_folder, model_folder, data_amount, verbose):
 
     i = 0
     full_header_files, full_recording_files = find_records(args.input_directory, original_output_dir)
-
+    print(f"generating{args.max_num_images} images")
     with ThreadPoolExecutor() as executor:
         futures = []
         for full_header_file, full_recording_file in zip(full_header_files, full_recording_files):
+            if i >= args.max_num_images:
+                break  # Stop submitting new tasks once the limit is reached
+
             future = executor.submit(process_single_file, full_header_file, full_recording_file, args, original_output_dir)
             futures.append(future)
+            i += 1  # Increment i after each task submission
 
+        # Handle the results of the submitted tasks
         for future in futures:
             try:
-                i += future.result()
+                result = future.result()
+                if verbose and result is not None:
+                    print(f"Processed {result} files")
             except Exception as e:
                 if verbose:
                     print(f"Error processing file: {e}")
-            if args.max_num_images != -1 and i >= args.max_num_images:
-                break
+
+    print(f"Finished generating {i} images")
 
 def prepare_data_for_training(data_folder, verbose=False):
 
@@ -622,28 +614,6 @@ def prepare_data_for_training(data_folder, verbose=False):
             lengths = np.concatenate(([0], lengths))
 
         rle["counts"] = lengths.tolist()
-
-        return rle, area
-
-    def binary_mask_to_rle(binary_lead_mask):
-        """
-        Converts a mask to COCO's RLE format and calculates the area.
-
-        Parameters:
-        - lead_mask: 2D numpy array of the mask.
-        - threshold: The threshold to binarize the mask.
-
-        Returns:
-        - rle: Dictionary representing the run-length encoding in COCO format.
-        - area: Integer representing the area of the mask.
-        """
-
-
-        # Step 2: Encode the binary mask using maskutils
-        rle = maskutils.encode(np.asfortranarray(binary_lead_mask.astype(np.uint8)))
-        rle['counts'] = rle['counts'].decode('utf-8')
-        # Step 3: Calculate the area
-        area = maskutils.area(rle)
 
         return rle, area
 
@@ -695,7 +665,7 @@ def prepare_data_for_training(data_folder, verbose=False):
                     # prepare the lead crop for segmentation model
                     lead_crop = image[y_min:y_max, x_min:x_max]
                     
-                    save_crop = np.random.choice([True, False], p=[0.1, 0.9])
+                    save_crop = np.random.choice([True, False], p=[0.2, 0.8])
                     
                     if save_crop:
                         imwrite(lead_crop, osp.join(img_crop_dir, f'{obj_count}.png'))
@@ -739,56 +709,83 @@ def prepare_data_for_training(data_folder, verbose=False):
     os.path.join(data_folder,'masks'),
     os.path.join(data_folder, 'annotation_coco.json'))
 
-def remove_image_gradients(image_array):
-   # Step 2: Split the image into R, G, B channels
-    if image_array.shape[2] == 4:
-        b_channel, g_channel, r_channel, a_channel = cv2.split(image_array)
-    elif image_array.shape[2] == 3:
-        b_channel, g_channel, r_channel = cv2.split(image_array)
-        a_channel = np.ones_like(b_channel) * 255
-    else: return image_array
+# def remove_image_gradients(image_array):
+#    # Step 2: Split the image into R, G, B channels
+#     if image_array.shape[2] == 4:
+#         b_channel, g_channel, r_channel, a_channel = cv2.split(image_array)
+#     elif image_array.shape[2] == 3:
+#         b_channel, g_channel, r_channel = cv2.split(image_array)
+#         a_channel = np.ones_like(b_channel) * 255
+#     else: return image_array
 
-    # Step 3: Apply Laplacian filter to each channel
-    laplacian_b = cv2.Laplacian(b_channel, cv2.CV_64F)
-    laplacian_g = cv2.Laplacian(g_channel, cv2.CV_64F)
-    laplacian_r = cv2.Laplacian(r_channel, cv2.CV_64F)
+#     # Step 3: Apply Laplacian filter to each channel
+#     laplacian_b = cv2.Laplacian(b_channel, cv2.CV_64F)
+#     laplacian_g = cv2.Laplacian(g_channel, cv2.CV_64F)
+#     laplacian_r = cv2.Laplacian(r_channel, cv2.CV_64F)
 
-    # Convert the result back to uint8 (8-bit image) because Laplacian can result in negative values
-    laplacian_b = cv2.convertScaleAbs(laplacian_b)
-    laplacian_g = cv2.convertScaleAbs(laplacian_g)
-    laplacian_r = cv2.convertScaleAbs(laplacian_r)
+#     # Convert the result back to uint8 (8-bit image) because Laplacian can result in negative values
+#     laplacian_b = cv2.convertScaleAbs(laplacian_b)
+#     laplacian_g = cv2.convertScaleAbs(laplacian_g)
+#     laplacian_r = cv2.convertScaleAbs(laplacian_r)
 
-    # Step 4: Merge the channels back together
-    laplacian_rgb = cv2.merge((laplacian_b, laplacian_g, laplacian_r))
-    return laplacian_rgb
+#     # Step 4: Merge the channels back together
+#     laplacian_rgb = cv2.merge((laplacian_b, laplacian_g, laplacian_r))
+#     return laplacian_rgb
 
 class OurDigitizationModel(AbstractDigitizationModel):
     def __init__(self):
         verify_environment()
-        self.config = None#os.path.join(work_dir, "maskrcnn_res101.py")
+        self.det_config = None#os.path.join(work_dir, "maskrcnn_res101.py")
         self.model = None
         self.unet = None
         self.mmseg = None
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
+        self.src_dir = 'TeamCode/src'
+        self.config_dir = os.path.join(self.src_dir, 'configs_ckpts')
 
 
     @classmethod
     def from_folder(cls, model_folder, verbose):
          # Create an instance of the class
         instance = cls()
+        
+        
+        if not os.path.exists(os.path.join(model_folder, "maskrcnn_res101.py")):
+            #copy the config file to the model folder
+            shutil.copy(os.path.join(instance.config_dir, 'maskrcnn_res101.py'), model_folder)
         instance.det_config = os.path.join(model_folder, "maskrcnn_res101.py")
+        
         # Construct checkpoint path based on the model_folder parameter
+        
         maskrcnn_checkpoint_log = os.path.join(model_folder, 'last_checkpoint')
+        if not os.path.exists(maskrcnn_checkpoint_log):
+            maskrcnn_checkpoint_log = os.path.join(instance.config_dir, 'last_checkpoint')
+            
         with open(maskrcnn_checkpoint_log, 'r') as f:
-            maskrcnn_checkpoint_file = os.path.join(model_folder, f.read().strip())
+            first_line = f.readline().strip()  # Read the first line and strip any whitespace/newline characters
+            model_name = os.path.basename(first_line)
+            # Check if the path exists based on the first line
+            if not os.path.exists(os.path.join(model_folder, first_line)):
+                maskrcnn_checkpoint_file = os.path.join(instance.config_dir, 'epoch_12.pth')
+                if not os.path.exists(os.path.join(model_folder, model_name)):
+                    shutil.copy(maskrcnn_checkpoint_file, model_folder)
+            else: 
+                maskrcnn_checkpoint_file = os.path.join(model_folder, first_line)
+                
+        print(f"this is the det_dir {instance.det_config}, this is the mrcnn ckpt {maskrcnn_checkpoint_file}")
 
         # Initialize the model using instance-specific variables
         # load model parameters from json file
+        if not os.path.exists(os.path.join(model_folder, 'ecg_params.json')):
+            shutil.copy(os.path.join(instance.config_dir, 'ecg_params.json'), model_folder)
         with open(os.path.join(model_folder, 'ecg_params.json'), 'r') as f:
             ecg_params = json.load(f)['segmentation']
         
 
-
-
+        if not os.path.exists(os.path.join(model_folder, 'segmentation/segmentation_model.pth')):
+            os.makedirs(os.path.join(model_folder, 'segmentation'), exist_ok=True)
+            shutil.copy(os.path.join(instance.config_dir, 'segmentation/segmentation_model.pth'), os.path.join(model_folder, 'segmentation/segmentation_model.pth'))
+        # print(f"this is the det_dir {instance.det_config}, this is the mrcnn ckpt {maskrcnn_checkpoint_file}")
         instance.model = init_detector(instance.det_config, maskrcnn_checkpoint_file, device=dev)
         instance.unet = ECGPredictor('resunet10', os.path.join(model_folder,'segmentation/segmentation_model.pth'), size=ecg_params['crop'], cbam=ecg_params['cbam'])
         # instance.mmseg = init_model(config='/scratch/hshang/moody/mmsegmentation_MINS/demo/deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive-ecg.py', checkpoint='/scratch/hshang/moody/mmsegmentation_MINS/demo/work_dirs/ECG/iter_400.pth', device=dev)
@@ -799,9 +796,9 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
     def train_detection_model(self, data_folder, model_folder, verbose):
         # load config
-        base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
+       
         # work_dir = os.path.join(base_dir, 'work_dir')
-        config_file_path = os.path.join(model_folder, 'maskrcnn_res101.py')
+        config_file_path = os.path.join(self.config_dir, 'maskrcnn_res101.py')
         cfg = Config.fromfile(config_file_path)
         cfg.metainfo = {
             'classes': ('ecg_lead', ),
@@ -814,6 +811,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
         cfg.train_dataloader.dataset.data_root = cfg.data_root
         cfg.train_dataloader.dataset.data_prefix.img = ''
         cfg.train_dataloader.dataset.metainfo = cfg.metainfo
+        cfg.model.backbone.init_cfg.checkpoint = os.path.join(self.config_dir, "original_pretrained_weights", "resnet101_msra-6cc46731.pth")
+        
 
         # cfg.val_dataloader.dataset.ann_file = 'val/annotation_coco.json'
         # cfg.val_dataloader.dataset.data_root = cfg.data_root
@@ -833,7 +832,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         cfg.work_dir = os.path.join(model_folder, 'maskrcnn_res101.py')
         cfg.data_root = data_folder
         # assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
-        cfg.load_from = os.path.join(base_dir,'checkpoints', 'mask_rcnn_r101_caffe_fpn_1x_coco_20200601_095758-805e06c1.pth')
+        cfg.load_from = os.path.join(self.config_dir,"original_pretrained_weights", 'mask_rcnn_r101_caffe_fpn_1x_coco_20200601_095758-805e06c1.pth')
 
         cfg.optim_wrapper.type = 'AmpOptimWrapper'
         cfg.optim_wrapper.loss_scale = 'dynamic'
@@ -861,7 +860,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         if verbose:
             print("Training segmentation model...")
         
-        param_file = os.path.join(model_folder, 'ecg_params.json')
+        param_file = os.path.join(self.config_dir, 'ecg_params.json')
         param_set = "segmentation"
         unet_data_dir = os.path.join(data_folder, 'cropped_img')
         ecg = ECGSegment(
@@ -873,7 +872,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
             models_dir=model_folder,
             cv=3,
             resume_training=True,
-            checkpoint_path=os.path.join(model_folder, 'segmentation_base_model.pth')
+            checkpoint_path=os.path.join(self.config_dir, 'segmentation_base_model.pth')
         )
         
         if verbose:
@@ -889,9 +888,28 @@ class OurDigitizationModel(AbstractDigitizationModel):
     #         METAINFO = dict(classes = classes, palette = palette)
     #         def __init__(self, **kwargs):
     #             super().__init__(img_suffix='.png', seg_map_suffix='.png', **kwargs)
-            
+        
+    #     # split train/val set randomly
+    #     import os.path as osp
+    #     data_root = '/scratch/hshang/moody/train_set_hr'
+    #     split_dir = 'splits'
+    #     img_dir = 'cropped_img'
+    #     ann_dir = 'cropped_masks'
+    #     mmengine.mkdir_or_exist(osp.join(data_root, split_dir))
+    #     filename_list = [osp.splitext(filename)[0] for filename in mmengine.scandir(
+    #         osp.join(data_root, ann_dir), suffix='.png')]
+    #     with open(osp.join(data_root, split_dir, 'train.txt'), 'w') as f:
+    #     # select first 4/5 as train set
+    #         train_length = int(len(filename_list)*4/5)
+    #         f.writelines(line + '\n' for line in filename_list[:train_length])
+    #     with open(osp.join(data_root, split_dir, 'val.txt'), 'w') as f:
+    #     # select last 1/5 as train set
+    #         f.writelines(line + '\n' for line in filename_list[train_length:])
     #     # from mmengine import Config
     #     cfg = Config.fromfile('/scratch/hshang/moody/mmsegmentation_MINS/demo/deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive-ecg.py')
+
+    #     cfg.data_root = data_folder
+
     #     # from mmengine.runner import Runner
 
     #     runner = Runner.from_cfg(cfg)
@@ -901,9 +919,9 @@ class OurDigitizationModel(AbstractDigitizationModel):
     def train_model(self, data_folder, model_folder, verbose):
         
         multiprocessing.set_start_method('spawn')
-        generate_data(data_folder, model_folder, 5000, verbose)
+        generate_data(data_folder, self.config_dir, 5000, verbose)
         prepare_data_for_training(data_folder, verbose)
-        # self.train_segmentation_model(data_folder, model_folder, verbose)
+        
         if verbose:
             print('Training the digitization model...')
             print('Finding the Challenge data...')
@@ -912,8 +930,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
         # training speed.
         setup_cache_size_limit_of_dynamo()
         
-        
-        # self.train_detection_model(cfg, model_folder, verbose)
+        # self.train_segmentation_model(data_folder, model_folder, verbose)
+        # # self.train_detection_model(cfg, model_folder, verbose)
         
 
         # Start the training in separate threads
@@ -927,8 +945,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
         detection_thread.join()
         segmentation_thread.join()
 
-        if verbose:
-            print("Both detection and segmentation models have been trained.")
+        # if verbose:
+        #     print("Both detection and segmentation models have been trained.")
         
 
     
@@ -967,14 +985,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
         bboxes, labels, scores, masks = filter_boxes(bboxes, labels, scores, masks)
         image = img/255.0
         
-        # cfg = Config.fromfile('/scratch/hshang/moody/mmsegmentation_MINS/demo/deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive-ecg.py')
-        # Init the model from the config and the checkpoint
-        # checkpoint_path = '/scratch/hshang/moody/mmsegmentation_MINS/demo/work_dirs/ECG/iter_400.pth'
 
-        # Load models into memory
-        # inferencer = MMSegInferencer(model=cfg, weights=checkpoint_path)
-        # Inference
-        # crop the images with the bboxes and put them into an array
+  
         
         mV_pixel = (25.4 *8.5*0.5)/(masks[0].shape[0]*5) #hardcoded for now
         # # mV_pixel = (1.5*25.4 *8.5*0.5)/(masks[0].shape[0]*5)
@@ -995,20 +1007,18 @@ class OurDigitizationModel(AbstractDigitizationModel):
             empty_signals_np[9:12,3*lead_length:4*lead_length] = 0
             return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
         
+        # mmseg stuff
         # to_be_readout = np.zeros((image.shape[0], image.shape[1], len(bboxes)))
         # print(to_be_readout.shape)
         # for i, (x1, y1, x2, y2) in enumerate(bboxes):
-            # lead = img[y1:y2, x1:x2, :]
-            # cv2.imwrite(f'lead_{i}.png', lead)
-            # print(lead.shape)
-            # result = inferencer(lead)['predictions']
+        #     lead = img[y1:y2, x1:x2, :]
 
-            # result = inference_model(self.mmseg, lead)
-            # from mmseg.apis import show_result_pyplot
-            # vis_image = show_result_pyplot(self.mmseg, lead, result, out_file='work_dirs/result.png')
-            # cv2.imwrite(f'leadout_{i}.png', result)
-            # print(result.shape)
-            # to_be_readout[y1:y2, x1:x2, i] = result.
+        #     result = inference_model(self.mmseg, lead)
+            
+        #     vis_result = show_result_pyplot(self.mmseg, lead, result)
+
+        #     print(vis_result.shape)
+        #     to_be_readout[y1:y2, x1:x2, :] = mmcv.bgr2rgb(vis_result)
         
         to_be_readout = self.unet.run(image, sorted_bboxes.astype(int)) # float
 
@@ -1064,7 +1074,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
         
         print('dumping pred')
         
-        signal=readOut(num_samples, to_be_readout, nrows, sorted_bboxes, mV_pixel)
+        freq = hc.get_sampling_frequency(input_header)
+        signal=readOut(num_samples, to_be_readout, nrows, sorted_bboxes, mV_pixel, freq)
         
 
         to_dump = {'bboxes': sorted_bboxes, 'masks': to_be_readout, 'scores': scores, 'labels': labels, 'record': record, 'nrows': nrows, 'signal_est':signal}
