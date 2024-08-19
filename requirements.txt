@@ -1,12 +1,13 @@
-numpy
 pandas
 pillow
 wfdb
 scikit-learn
 pycocotools
 imutils
-imgaug
+imgaug==0.4.0
 qrcode
 imageio
 matplotlib
 PyWavelets 
+scipy
+numpy==1.24.4

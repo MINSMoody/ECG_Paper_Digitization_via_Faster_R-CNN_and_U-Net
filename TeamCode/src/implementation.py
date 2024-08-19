@@ -292,15 +292,33 @@ def bboxes_sorting(bboxes, img_width):
         if ncol >= 4:
             print('row=4, col>=4')
             
-            rowswith4cols = [k for k, v in row_dict_numcol.items() if int(v) == 4]           
+            rowswith4cols = [k for k, v in row_dict_numcol.items() if int(v) == 4]
+
+            # Initialize left and right with default values
+            left = float('inf')
+            right = float('-inf')
+
+            # Only proceed if rowswith4cols is not empty
             if rowswith4cols:
-                left = min([np.min(row_dict[row][:,0]) for row in rowswith4cols if len(row_dict[row]) > 0])
-                right = max([np.max(row_dict[row][:,2]) for row in rowswith4cols if len(row_dict[row]) > 0])
+                left_values = [np.min(row_dict[row][:, 0]) for row in rowswith4cols if len(row_dict[row]) > 0]
+                right_values = [np.max(row_dict[row][:, 2]) for row in rowswith4cols if len(row_dict[row]) > 0]
+
+                if left_values:
+                    left = min(left_values)
+                if right_values:
+                    right = max(right_values)
+
+            # Ensure that left and right have valid values
+            if left == float('inf') or right == float('-inf'):
+                print('Invalid left or right')
+                return None, None
+
             leadwidth = (right - left) / 4 if right != left else 1  # Prevent division by zero
-            
+
             leftmid = left + leadwidth
             mid = left + 2 * leadwidth
             rightmid = left + 3 * leadwidth
+
             
             for key in [0, 1, 2]:
                 if row_dict_numcol[key] == 4:
@@ -349,16 +367,33 @@ def bboxes_sorting(bboxes, img_width):
         if ncol >= 4:
             print('row=3, col>=4')
             
-            rowswith4cols = [k for k, v in row_dict_numcol.items() if int(v) == 4]   
+            rowswith4cols = [k for k, v in row_dict_numcol.items() if int(v) == 4]
+
+            # Initialize left and right with default values
+            left = float('inf')
+            right = float('-inf')
+
+            # Only proceed if rowswith4cols is not empty
             if rowswith4cols:
-                left = min([np.min(row_dict[row][:,0]) for row in rowswith4cols if len(row_dict[row]) > 0])
-                right = max([np.max(row_dict[row][:,2]) for row in rowswith4cols if len(row_dict[row]) > 0])
+                left_values = [np.min(row_dict[row][:, 0]) for row in rowswith4cols if len(row_dict[row]) > 0]
+                right_values = [np.max(row_dict[row][:, 2]) for row in rowswith4cols if len(row_dict[row]) > 0]
+
+                if left_values:
+                    left = min(left_values)
+                if right_values:
+                    right = max(right_values)
+
+            # Ensure that left and right have valid values
+            if left == float('inf') or right == float('-inf'):
+                print('Invalid left or right')
+                return None, None
 
             leadwidth = (right - left) / 4 if right != left else 1  # Prevent division by zero
-            
+
             leftmid = left + leadwidth
             mid = left + 2 * leadwidth
             rightmid = left + 3 * leadwidth
+
             
             for key in [0, 1, 2]:
                 if row_dict_numcol[key] == 4:
@@ -552,7 +587,7 @@ def generate_data(data_folder, config_folder, data_amount, verbose):
     args = Namespace(**args_dict)
     random.seed(args.seed)
     args.input_directory = data_folder
-    args.output_directory = data_folder
+    args.output_directory = os.path.join(data_folder, 'mrcnn_data')
     args.max_num_images = data_amount
     if not os.path.isabs(args.input_directory):
         args.input_directory = os.path.normpath(os.path.join(os.getcwd(), args.input_directory))
@@ -569,7 +604,7 @@ def generate_data(data_folder, config_folder, data_amount, verbose):
 
     i = 0
     full_header_files, full_recording_files = find_records(args.input_directory, original_output_dir)
-    print(f"generating{args.max_num_images} images")
+    print(f"generating {args.max_num_images} images")
     with ThreadPoolExecutor() as executor:
         futures = []
         for full_header_file, full_recording_file in zip(full_header_files, full_recording_files):
@@ -704,33 +739,33 @@ def prepare_data_for_training(data_folder, verbose=False):
             categories=[{'id': 0, 'name': 'ecg_lead'}])
         mmengine.dump(coco_format_json, out_file)
     convert_ecg_to_coco(
-    data_folder,
-    data_folder,
-    os.path.join(data_folder,'masks'),
-    os.path.join(data_folder, 'annotation_coco.json'))
+    os.path.join(data_folder, 'mrcnn_data'),
+    os.path.join(data_folder, 'mrcnn_data'),
+    os.path.join(data_folder, 'mrcnn_data','masks'),
+    os.path.join(data_folder, 'mrcnn_data', 'annotation_coco.json'))
 
-# def remove_image_gradients(image_array):
-#    # Step 2: Split the image into R, G, B channels
-#     if image_array.shape[2] == 4:
-#         b_channel, g_channel, r_channel, a_channel = cv2.split(image_array)
-#     elif image_array.shape[2] == 3:
-#         b_channel, g_channel, r_channel = cv2.split(image_array)
-#         a_channel = np.ones_like(b_channel) * 255
-#     else: return image_array
+def remove_image_gradients(image_array):
+   # Step 2: Split the image into R, G, B channels
+    if image_array.shape[2] == 4:
+        b_channel, g_channel, r_channel, a_channel = cv2.split(image_array)
+    elif image_array.shape[2] == 3:
+        b_channel, g_channel, r_channel = cv2.split(image_array)
+        a_channel = np.ones_like(b_channel) * 255
+    else: return image_array
 
-#     # Step 3: Apply Laplacian filter to each channel
-#     laplacian_b = cv2.Laplacian(b_channel, cv2.CV_64F)
-#     laplacian_g = cv2.Laplacian(g_channel, cv2.CV_64F)
-#     laplacian_r = cv2.Laplacian(r_channel, cv2.CV_64F)
+    # Step 3: Apply Laplacian filter to each channel
+    laplacian_b = cv2.Laplacian(b_channel, cv2.CV_64F)
+    laplacian_g = cv2.Laplacian(g_channel, cv2.CV_64F)
+    laplacian_r = cv2.Laplacian(r_channel, cv2.CV_64F)
 
-#     # Convert the result back to uint8 (8-bit image) because Laplacian can result in negative values
-#     laplacian_b = cv2.convertScaleAbs(laplacian_b)
-#     laplacian_g = cv2.convertScaleAbs(laplacian_g)
-#     laplacian_r = cv2.convertScaleAbs(laplacian_r)
+    # Convert the result back to uint8 (8-bit image) because Laplacian can result in negative values
+    laplacian_b = cv2.convertScaleAbs(laplacian_b)
+    laplacian_g = cv2.convertScaleAbs(laplacian_g)
+    laplacian_r = cv2.convertScaleAbs(laplacian_r)
 
-#     # Step 4: Merge the channels back together
-#     laplacian_rgb = cv2.merge((laplacian_b, laplacian_g, laplacian_r))
-#     return laplacian_rgb
+    # Step 4: Merge the channels back together
+    laplacian_rgb = cv2.merge((laplacian_b, laplacian_g, laplacian_r))
+    return laplacian_rgb
 
 class OurDigitizationModel(AbstractDigitizationModel):
     def __init__(self):
@@ -786,8 +821,11 @@ class OurDigitizationModel(AbstractDigitizationModel):
             os.makedirs(os.path.join(model_folder, 'segmentation'), exist_ok=True)
             shutil.copy(os.path.join(instance.config_dir, 'segmentation/segmentation_model.pth'), os.path.join(model_folder, 'segmentation/segmentation_model.pth'))
         # print(f"this is the det_dir {instance.det_config}, this is the mrcnn ckpt {maskrcnn_checkpoint_file}")
+        
+        unet_checkpoint_file = os.path.join(model_folder, 'segmentation/segmentation_model.pth')
+        print(f"this is the unet ckpt {unet_checkpoint_file}")
         instance.model = init_detector(instance.det_config, maskrcnn_checkpoint_file, device=dev)
-        instance.unet = ECGPredictor('resunet10', os.path.join(model_folder,'segmentation/segmentation_model.pth'), size=ecg_params['crop'], cbam=ecg_params['cbam'])
+        instance.unet = ECGPredictor('resunet10', unet_checkpoint_file, size=ecg_params['crop'], cbam=False)
         # instance.mmseg = init_model(config='/scratch/hshang/moody/mmsegmentation_MINS/demo/deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive-ecg.py', checkpoint='/scratch/hshang/moody/mmsegmentation_MINS/demo/work_dirs/ECG/iter_400.pth', device=dev)
         if verbose:
             print(f"Model loaded from {maskrcnn_checkpoint_file}")
@@ -806,7 +844,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
                 (220, 20, 60),
             ]
         }
-        cfg.data_root = data_folder
+        cfg.data_root = os.path.join(data_folder, 'mrcnn_data')
         cfg.train_dataloader.dataset.ann_file = 'annotation_coco.json'
         cfg.train_dataloader.dataset.data_root = cfg.data_root
         cfg.train_dataloader.dataset.data_prefix.img = ''
@@ -830,7 +868,6 @@ class OurDigitizationModel(AbstractDigitizationModel):
         # cfg.test_evaluator = cfg.val_evaluator
         
         cfg.work_dir = os.path.join(model_folder, 'maskrcnn_res101.py')
-        cfg.data_root = data_folder
         # assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
         cfg.load_from = os.path.join(self.config_dir,"original_pretrained_weights", 'mask_rcnn_r101_caffe_fpn_1x_coco_20200601_095758-805e06c1.pth')
 
@@ -862,7 +899,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         
         param_file = os.path.join(self.config_dir, 'ecg_params.json')
         param_set = "segmentation"
-        unet_data_dir = os.path.join(data_folder, 'cropped_img')
+        unet_data_dir = os.path.join(data_folder, 'mrcnn_data', 'cropped_img')
         ecg = ECGSegment(
             param_file=param_file,
             param_set=param_set
@@ -933,28 +970,30 @@ class OurDigitizationModel(AbstractDigitizationModel):
         # self.train_segmentation_model(data_folder, model_folder, verbose)
         # # self.train_detection_model(cfg, model_folder, verbose)
         
-
+        self.train_detection_model(data_folder, model_folder, verbose)
+        self.train_segmentation_model(data_folder, model_folder, verbose)
         # Start the training in separate threads
-        detection_thread = multiprocessing.Process(target=self.train_detection_model, args=(data_folder, model_folder, verbose))
-        segmentation_thread = multiprocessing.Process(target=self.train_segmentation_model, args=(data_folder, model_folder, verbose))
+        # detection_thread = multiprocessing.Process(target=self.train_detection_model, args=(data_folder, model_folder, verbose))
+        # segmentation_thread = multiprocessing.Process(target=self.train_segmentation_model, args=(data_folder, model_folder, verbose))
     
-        detection_thread.start()
-        segmentation_thread.start()
+        # detection_thread.start()
+        # segmentation_thread.start()
 
-        # Wait for both threads to complete
-        detection_thread.join()
-        segmentation_thread.join()
+        # # Wait for both threads to complete
+        # detection_thread.join()
+        # segmentation_thread.join()
 
-        # if verbose:
-        #     print("Both detection and segmentation models have been trained.")
+        if verbose:
+            print("Both detection and segmentation models have been trained.")
         
 
     
     def run_digitization_model(self, record, verbose):
+
+        image_files = get_image_files(record)
         
         # load image paths
         path = os.path.split(record)[0]
-        image_files = get_image_files(record)
 
         images = list()
         for image_file in image_files:
@@ -966,11 +1005,27 @@ class OurDigitizationModel(AbstractDigitizationModel):
         img_path = images[0]
 
         img = mmcv.imread(img_path,channel_order='rgb')
+        mV_pixel = (25.4 *8.5*0.5)/(img[0].shape[0]*5) #hardcoded for now
+        # # mV_pixel = (1.5*25.4 *8.5*0.5)/(masks[0].shape[0]*5)
+        header_path = hc.get_header_file(record)
+        with open(header_path, 'r') as f:
+            input_header = f.read()
+
+        num_samples = get_num_samples(input_header)
+        
+        empty_signals_np = np.full((12, num_samples), np.nan)
+        lead_length = num_samples // 4
+        empty_signals_np[0:3,0:lead_length] = 0
+        empty_signals_np[3:6,lead_length:2*lead_length] = 0
+        empty_signals_np[6:9,2*lead_length:3*lead_length] = 0
+        empty_signals_np[9:12,3*lead_length:4*lead_length] = 0
+        
+        
         # remove image gradient
         # img_no_grad = remove_image_gradients(img)
         # mmcv.imwrite(img_no_grad, os.path.join(record, 'processed.png'))
-        with Registry('scope').switch_scope_and_registry('mmdet'):
-            result = inference_detector(self.model, img)
+        # with Registry('scope').switch_scope_and_registry('mmdet'):
+        result = inference_detector(self.model, img)
         result_dict = result.to_dict()
         pred = result_dict['pred_instances']
         bboxes = pred['bboxes'].to(torch.int).cpu().detach().numpy()
@@ -988,23 +1043,17 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
   
         
-        mV_pixel = (25.4 *8.5*0.5)/(masks[0].shape[0]*5) #hardcoded for now
-        # # mV_pixel = (1.5*25.4 *8.5*0.5)/(masks[0].shape[0]*5)
-        header_path = hc.get_header_file(record)
-        with open(header_path, 'r') as f:
-            input_header = f.read()
-
-        num_samples = get_num_samples(input_header)
         
-        sorted_bboxes, nrows = bboxes_sorting(bboxes, masks.shape[1])
+        try:
+            sorted_bboxes, nrows = bboxes_sorting(bboxes, masks.shape[1])
+        except Exception as e:
+            print(f'Error in sorting bboxes: {e}')
+            return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
+            
         if sorted_bboxes is None:
             # failed to detect leads
-            empty_signals_np = np.full((12, num_samples), np.nan)
-            lead_length = num_samples // 4
-            empty_signals_np[0:3,0:lead_length] = 0
-            empty_signals_np[3:6,lead_length:2*lead_length] = 0
-            empty_signals_np[6:9,2*lead_length:3*lead_length] = 0
-            empty_signals_np[9:12,3*lead_length:4*lead_length] = 0
+            
+            print("sorting failed")
             return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
         
         # mmseg stuff
@@ -1019,9 +1068,11 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
         #     print(vis_result.shape)
         #     to_be_readout[y1:y2, x1:x2, :] = mmcv.bgr2rgb(vis_result)
-        
-        to_be_readout = self.unet.run(image, sorted_bboxes.astype(int)) # float
-
+        try:
+            to_be_readout = self.unet.run(image, sorted_bboxes.astype(int)) # float
+        except Exception as e:
+            "Error in unet: {e}"
+            return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
         to_be_readout = np.where(to_be_readout > 0.5, True, False)
         
         
@@ -1075,12 +1126,16 @@ class OurDigitizationModel(AbstractDigitizationModel):
         print('dumping pred')
         
         freq = hc.get_sampling_frequency(input_header)
-        signal=readOut(num_samples, to_be_readout, nrows, sorted_bboxes, mV_pixel, freq)
         
+        try:
+            signal=readOut(num_samples, to_be_readout, nrows, sorted_bboxes, mV_pixel, freq)
+        except Exception as e:
+            print(f'Error in readout: {e}')
+            return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
 
-        to_dump = {'bboxes': sorted_bboxes, 'masks': to_be_readout, 'scores': scores, 'labels': labels, 'record': record, 'nrows': nrows, 'signal_est':signal}
-        with open('to_dump.pkl', 'wb') as f:
-            pickle.dump(to_dump, f)
+        # to_dump = {'bboxes': sorted_bboxes, 'masks': to_be_readout, 'scores': scores, 'labels': labels, 'record': record, 'nrows': nrows, 'signal_est':signal}
+        # with open('to_dump.pkl', 'wb') as f:
+        #     pickle.dump(to_dump, f)
 
         # print('dumping gt')
         # signal=readOut(header_path, gt_masks, gt_bboxes, mV_pixel)

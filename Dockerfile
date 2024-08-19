@@ -15,7 +15,7 @@ RUN pip install -U openmim
 RUN mim install "mmengine==0.10.4"
 RUN mim install "mmcv==2.0.1" 
 RUN mim install "mmdet==3.1.0"
-
+# RUN pip install --upgrade imgaug
 
 
 ## DO NOT EDIT these 3 lines.
