@@ -7,3 +7,6 @@ pycocotools
 imutils
 imgaug
 qrcode
+imageio
+pywt
+matplotlib

@@ -1,6 +1,6 @@
 auto_scale_lr = dict(base_batch_size=16, enable=False)
 backend_args = None
-data_root = '/scratch/hshang/moody/final_phase_submission/train_set_hr'
+data_root = '/scratch/hshang/moody/final_phase_submission/official-phase-mins-eth/TeamCode/tests/resources/test_data_gen'
 dataset_type = 'CocoDataset'
 default_hooks = dict(
     checkpoint=dict(interval=3, type='CheckpointHook'),
@@ -294,7 +294,8 @@ train_dataloader = dict(
         ann_file='annotation_coco.json',
         backend_args=None,
         data_prefix=dict(img=''),
-        data_root='/scratch/hshang/moody/final_phase_submission/train_set_hr',
+        data_root=
+        '/scratch/hshang/moody/final_phase_submission/official-phase-mins-eth/TeamCode/tests/resources/test_data_gen',
         filter_cfg=dict(filter_empty_gt=True, min_size=32),
         metainfo=dict(classes=('ecg_lead', ), palette=[
             (

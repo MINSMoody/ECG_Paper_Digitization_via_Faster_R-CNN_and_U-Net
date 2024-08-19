@@ -69,6 +69,7 @@ def get_augment(input_file,output_directory,rotate=25,noise=25,crop=0.01,tempera
         #             p=[0.5, 0.3, 0.2]
         #         )
         #     ),
+          
         #   iaa.imgcorruptlike.ShotNoise(severity=1),
           iaa.AdditiveGaussianNoise(scale=(0, noise)),
           iaa.AdditivePoissonNoise(lam=(0.0, noise/4)),
@@ -76,6 +77,8 @@ def get_augment(input_file,output_directory,rotate=25,noise=25,crop=0.01,tempera
           
           iaa.Crop(percent=crop_sample),
           ]
+    if np.random.random() < 0.2:
+        transform.append(iaa.UniformColorQuantization(n_colors=(2, 3)))
     if temperature:
         transform.append(iaa.ChangeColorTemperature(temperature))
     seq = iaa.Sequential(transform)

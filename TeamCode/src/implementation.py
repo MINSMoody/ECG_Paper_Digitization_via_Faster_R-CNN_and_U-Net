@@ -428,41 +428,57 @@ def crop_from_bbox(bbox, mask, mV_pixel):
 #     signal = np.array(signal)
 #     return signal
 
+import pywt
+import numpy as np
+
+def wavelet_denoising(signal, wavelet='db4', level=3):
+    coeffs = pywt.wavedec(signal, wavelet, level=level)
+    sigma = np.median(np.abs(coeffs[-1])) / 0.6745
+    uthresh = sigma * np.sqrt(2 * np.log(len(signal)))
+    denoised_coeffs = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
+    return pywt.waverec(denoised_coeffs, wavelet)
 
 def readOut(num_samples, masks, nrows, bboxes, mV_pixel):
     
+    num_signals = 12
+    signals_np = np.full((num_signals, num_samples), np.nan)
+
+    def process_signal(index, bboxes, masks, mV_pixel, signallen):
+        signal = crop_from_bbox(bboxes[index], masks[index], mV_pixel)
+        signal = interpolate_nan(signal) - np.mean(signal)
+        
+        # signal = np.clip(signal, -2, 2)
+        try :
+            signal = apply_savgol_filter(signal)
+        except:
+            print('Error in savgol filter')
+        signal = wavelet_denoising(signal)
+        if len(signal) < signallen:
+            signal = upsample(signal, signallen)
+        else:
+            signal = downsample(signal, signallen)
+        return signal
+
     if nrows == 4:
-        signals_np = np.full((12, num_samples), np.nan)
-        for i in range(12):
-            signal = crop_from_bbox(bboxes[i], masks[i], mV_pixel)
-            
-            signal = interpolate_nan(signal) - np.mean(signal)
-            signal = np.clip(signal, -2, 2)
+        for i in range(num_signals):
             signallen = num_samples if i == 1 else num_samples // 4
             start_idx = (num_samples // 4) * (i // 3)
             end_idx = start_idx + signallen
-            if len(signal) < 5:
-                signal = np.zeros(signallen)
-            signal = apply_savgol_filter(signal)
-            signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
-            signals_np[i, start_idx:end_idx] = signal
-
-    
+            if i < len(bboxes):
+                signal = process_signal(i, bboxes, masks, mV_pixel, signallen)
+                signals_np[i, start_idx:end_idx] = signal
+            else:
+                signals_np[i, start_idx:end_idx] = np.zeros(signallen)
     elif nrows == 3:
-        signals_np = np.full((12, num_samples), np.nan)
         for i in range(bboxes.shape[0]):
-            signal = crop_from_bbox(bboxes[i], masks[i], mV_pixel)
-            signal = interpolate_nan(signal) - np.mean(signal)
-            signal = np.clip(signal, -2, 2)
             signallen = num_samples // 4
-            # signal = apply_savgol_filter(signal)
-            signal = upsample(signal, signallen) if len(signal) < signallen else downsample(signal, signallen)
             start_idx = (num_samples // 4) * (i // 3)
             end_idx = start_idx + signallen
+            signal = process_signal(i, bboxes, masks, mV_pixel, signallen)
             signals_np[i, start_idx:end_idx] = signal
-            
     
     signals_np = np.clip(signals_np, -2, 2)
+    
     return signals_np.T if signals_np.shape[1] > signals_np.shape[0] else signals_np
     
 
@@ -546,13 +562,15 @@ def process_single_file(full_header_file, full_recording_file, args, original_ou
 
     return run_single_file(args)
 
-def generate_data(data_folder, model_folder, verbose):
+def generate_data(data_folder, model_folder, data_amount, verbose):
     with open(os.path.join(model_folder, 'data_format.json'), 'r') as f:
         args_dict = json.load(f)
     args = Namespace(**args_dict)
     random.seed(args.seed)
     args.input_directory = data_folder
-    args.output_directory = data_folder
+    args.output_directory = os.path.join(data_folder, "training_data")
+    os.makedirs(args.output_directory, exist_ok=True)
+    args.max_num_images = data_amount
     if not os.path.isabs(args.input_directory):
         args.input_directory = os.path.normpath(os.path.join(os.getcwd(), args.input_directory))
     if not os.path.isabs(args.output_directory):
@@ -576,7 +594,11 @@ def generate_data(data_folder, model_folder, verbose):
             futures.append(future)
 
         for future in futures:
-            i += future.result()
+            try:
+                i += future.result()
+            except Exception as e:
+                if verbose:
+                    print(f"Error processing file: {e}")
             if args.max_num_images != -1 and i >= args.max_num_images:
                 break
 
@@ -745,8 +767,6 @@ def remove_image_gradients(image_array):
 class OurDigitizationModel(AbstractDigitizationModel):
     def __init__(self):
         verify_environment()
-        # work_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'work_dir')
-        # self.work_dir = None#work_dir
         self.config = None#os.path.join(work_dir, "maskrcnn_res101.py")
         self.model = None
         self.unet = None
@@ -760,14 +780,15 @@ class OurDigitizationModel(AbstractDigitizationModel):
         # instance.work_dir = model_folder
         instance.config = os.path.join(model_folder, "maskrcnn_res101.py")
         # Construct checkpoint path based on the model_folder parameter
-        maskrcnn_checkpoint_file = os.path.join(model_folder, 'epoch_15.pth')
+        maskrcnn_checkpoint_log = os.path.join(model_folder, 'last_checkpoint')
+        with open(maskrcnn_checkpoint_log, 'r') as f:
+            maskrcnn_checkpoint_file = os.path.join(model_folder, f.read().strip())
 
         # Initialize the model using instance-specific variables
         # load model parameters from json file
         with open(os.path.join(model_folder, 'ecg_params.json'), 'r') as f:
             ecg_params = json.load(f)['segmentation']
         instance.model = init_detector(instance.config, maskrcnn_checkpoint_file, device=dev)
-        # instance.model = 
         instance.unet = ECGPredictor('resunet10', os.path.join(model_folder,'segmentation/segmentation_model.pth'), size=ecg_params['crop'], cbam=ecg_params['cbam'])
         # instance.mmseg = init_model(config='/scratch/hshang/moody/mmsegmentation_MINS/demo/deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive-ecg.py', checkpoint='/scratch/hshang/moody/mmsegmentation_MINS/demo/work_dirs/ECG/iter_400.pth', device=dev)
         if verbose:
@@ -775,7 +796,47 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
         return instance
 
-    def train_detection_model(self, cfg, model_folder, verbose):
+    def train_detection_model(self, data_folder, model_folder, verbose):
+        # load config
+        base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
+        # work_dir = os.path.join(base_dir, 'work_dir')
+        config_file_path = os.path.join(model_folder, 'maskrcnn_res101.py')
+        cfg = Config.fromfile(config_file_path)
+        cfg.metainfo = {
+            'classes': ('ecg_lead', ),
+            'palette': [
+                (220, 20, 60),
+            ]
+        }
+        cfg.data_root = data_folder
+        cfg.train_dataloader.dataset.ann_file = 'annotation_coco.json'
+        cfg.train_dataloader.dataset.data_root = cfg.data_root
+        cfg.train_dataloader.dataset.data_prefix.img = ''
+        cfg.train_dataloader.dataset.metainfo = cfg.metainfo
+
+        # cfg.val_dataloader.dataset.ann_file = 'val/annotation_coco.json'
+        # cfg.val_dataloader.dataset.data_root = cfg.data_root
+        # cfg.val_dataloader.dataset.data_prefix.img = 'val/'
+        # cfg.val_dataloader.dataset.metainfo = cfg.metainfo
+        
+        cfg.val_cfg = None
+        cfg.val_dataloader = None
+
+        # cfg.test_dataloader = cfg.val_dataloader
+
+        # Modify metric config
+        # cfg.val_evaluator.ann_file = cfg.data_root+'/'+'val/annotation_coco.json'
+        cfg.val_evaluator = None
+        # cfg.test_evaluator = cfg.val_evaluator
+        
+        cfg.work_dir = os.path.join(model_folder, 'maskrcnn_res101.py')
+        cfg.data_root = data_folder
+        # assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
+        cfg.load_from = os.path.join(base_dir,'checkpoints', 'mask_rcnn_r101_caffe_fpn_1x_coco_20200601_095758-805e06c1.pth')
+
+        cfg.optim_wrapper.type = 'AmpOptimWrapper'
+        cfg.optim_wrapper.loss_scale = 'dynamic'
+
         if verbose:
             print("Training detection model...")
         
@@ -838,81 +899,40 @@ class OurDigitizationModel(AbstractDigitizationModel):
 
     def train_model(self, data_folder, model_folder, verbose):
         
-        # multiprocessing.set_start_method('spawn')
-        # generate_data(data_folder, model_folder, verbose)
-        # prepare_data_for_training(data_folder, verbose)
+        multiprocessing.set_start_method('spawn')
+        generate_data(data_folder, model_folder, 5000, verbose)
+        prepare_data_for_training(data_folder, verbose)
         # self.train_segmentation_model(data_folder, model_folder, verbose)
-        # if verbose:
-        #     print('Training the digitization model...')
-        #     print('Finding the Challenge data...')
+        if verbose:
+            print('Training the digitization model...')
+            print('Finding the Challenge data...')
 
         # Reduce the number of repeated compilations and improve
         # training speed.
         setup_cache_size_limit_of_dynamo()
         
-        # load config
-        base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
-        # work_dir = os.path.join(base_dir, 'work_dir')
-        config_file_path = os.path.join(model_folder, 'maskrcnn_res101.py')
-        cfg = Config.fromfile(config_file_path)
-        cfg.metainfo = {
-            'classes': ('ecg_lead', ),
-            'palette': [
-                (220, 20, 60),
-            ]
-        }
-        cfg.data_root = data_folder
-        cfg.train_dataloader.dataset.ann_file = 'annotation_coco.json'
-        cfg.train_dataloader.dataset.data_root = cfg.data_root
-        cfg.train_dataloader.dataset.data_prefix.img = ''
-        cfg.train_dataloader.dataset.metainfo = cfg.metainfo
-
-        # cfg.val_dataloader.dataset.ann_file = 'val/annotation_coco.json'
-        # cfg.val_dataloader.dataset.data_root = cfg.data_root
-        # cfg.val_dataloader.dataset.data_prefix.img = 'val/'
-        # cfg.val_dataloader.dataset.metainfo = cfg.metainfo
         
-        cfg.val_cfg = None
-        cfg.val_dataloader = None
-
-        # cfg.test_dataloader = cfg.val_dataloader
-
-        # Modify metric config
-        # cfg.val_evaluator.ann_file = cfg.data_root+'/'+'val/annotation_coco.json'
-        cfg.val_evaluator = None
-        # cfg.test_evaluator = cfg.val_evaluator
-        
-        cfg.work_dir = os.path.join(model_folder, 'maskrcnn_res101.py')
-        cfg.data_root = data_folder
-        # assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
-        cfg.load_from = os.path.join(base_dir,'checkpoints', 'mask_rcnn_r101_caffe_fpn_1x_coco_20200601_095758-805e06c1.pth')
-
-        cfg.optim_wrapper.type = 'AmpOptimWrapper'
-        cfg.optim_wrapper.loss_scale = 'dynamic'
-        self.train_detection_model(cfg, model_folder, verbose)
+        # self.train_detection_model(cfg, model_folder, verbose)
         
 
-        # # Start the training in separate threads
-        # detection_thread = multiprocessing.Process(target=self.train_detection_model, args=(cfg, model_folder, verbose))
-        # segmentation_thread = multiprocessing.Process(target=self.train_segmentation_model, args=(data_folder, model_folder, verbose))
+        # Start the training in separate threads
+        detection_thread = multiprocessing.Process(target=self.train_detection_model, args=(data_folder, model_folder, verbose))
+        segmentation_thread = multiprocessing.Process(target=self.train_segmentation_model, args=(data_folder, model_folder, verbose))
     
-        # detection_thread.start()
-        # segmentation_thread.start()
+        detection_thread.start()
+        segmentation_thread.start()
 
-        # # Wait for both threads to complete
-        # detection_thread.join()
-        # segmentation_thread.join()
+        # Wait for both threads to complete
+        detection_thread.join()
+        segmentation_thread.join()
 
-        # if verbose:
-        #     print("Both detection and segmentation models have been trained.")
+        if verbose:
+            print("Both detection and segmentation models have been trained.")
         
 
     
     def run_digitization_model(self, record, verbose):
         
-        # config=f'/config/mask-rcnn_r50-caffe_fpn_ms-poly-3x_ecg.py'
-        # img_dir = '/scratch/hshang/DLECG_Data/data/00000/val/00900_lr-0.png'
-
         # load image paths
         path = os.path.split(record)[0]
         image_files = get_image_files(record)
@@ -925,13 +945,12 @@ class OurDigitizationModel(AbstractDigitizationModel):
                 
         # assume there is only one image per record
         img_path = images[0]
-        # print(f"Processing image: {img_path}")
 
         img = mmcv.imread(img_path,channel_order='rgb')
         # remove image gradient
-        img_no_grad = remove_image_gradients(img)
-        mmcv.imwrite(img_no_grad, os.path.join(record, 'processed.png'))
-        result = inference_detector(self.model, img_no_grad)
+        # img_no_grad = remove_image_gradients(img)
+        # mmcv.imwrite(img_no_grad, os.path.join(record, 'processed.png'))
+        result = inference_detector(self.model, img)
         result_dict = result.to_dict()
         pred = result_dict['pred_instances']
         bboxes = pred['bboxes'].to(torch.int).cpu().detach().numpy()

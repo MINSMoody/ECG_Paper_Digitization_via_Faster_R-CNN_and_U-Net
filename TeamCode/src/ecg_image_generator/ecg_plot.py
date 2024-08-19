@@ -175,7 +175,11 @@ def ecg_plot(
     #rows are calculated based on corresponding number of leads and number of columns
 
     matplotlib.use("Agg")
+    line_widths = [line_width * 0.75, line_width, line_width * 1.25]
+    line_width_probs = [0.2, 0.5, 0.3]
+    chosen_width = np.random.choice(line_widths, p=line_width_probs)
 
+            
     #check if the ecg dict is empty
     if ecg == {}:
         return 
@@ -383,6 +387,8 @@ def ecg_plot(
                     bb = t1[0].get_window_extent()                                                
                     x1, y1 = bb.x0*resolution/fig.dpi, bb.y0*resolution/fig.dpi
                     x2, y2 = bb.x1*resolution/fig.dpi, bb.y1*resolution/fig.dpi
+                    # don't include dc pulse in the bounding box
+                    x1 += dc_offset
                     
                 
         elif(i%columns == 0):
@@ -399,6 +405,8 @@ def ecg_plot(
                     bb = t1[0].get_window_extent()                                                
                     x1, y1 = bb.x0*resolution/fig.dpi, bb.y0*resolution/fig.dpi
                     x2, y2 = bb.x1*resolution/fig.dpi, bb.y1*resolution/fig.dpi
+                    # don't include dc pulse in the bounding box
+                    x1 += dc_offset
 
         t1 = ax.plot(np.arange(0,len(ecg[leadName])*step,step) + x_offset + dc_offset + x_gap, 
                 ecg[leadName] + y_offset,
@@ -534,6 +542,7 @@ def ecg_plot(
                 y1 = min(y1, bb.y0*resolution/fig.dpi)
                 y2 = max(y2, bb.y1*resolution/fig.dpi)
                 x2 = bb.x1*resolution/fig.dpi
+                x1 += dc_full_lead_offset
 
             box_dict = dict()
             x1 = int(x1)
@@ -604,7 +613,8 @@ def ecg_plot(
 
         # Precompute the probabilities for line width and disappearance
         line_widths = [grid_line_width * 0.75, grid_line_width, grid_line_width * 1.5]
-        line_width_probs = [0.2, 0.6, 0.2]
+        line_width_probs = [0.2, 0.5, 0.3]
+        solid_line_prob = 0.3
 
         # Iterate over the gridlines
         for line in lines:
@@ -612,10 +622,21 @@ def ecg_plot(
             chosen_width = np.random.choice(line_widths, p=line_width_probs)
             
             # Decide if the line should disappear
-            if np.random.random() < 0.05:
+            if np.random.random() < 0.15:
                 line.set_linewidth(0)  # Disappear the line
             else:
                 line.set_linewidth(chosen_width)
+            
+            # Decide if the line should be solid
+            if np.random.random() < solid_line_prob:
+                line.set_color((0, 0, 0))  # Set the line to black
+
+        intersection_strength = 1.75  # Amplify the intersection points
+        if np.random.random() < 0.2:
+             # Emphasize the intersections
+            for i in np.arange(x_min, x_max, x_grid_size):
+                for j in np.arange(y_min, y_max, y_grid_size):
+                    ax.plot(i, j, 'o', markersize=grid_line_width * intersection_strength, color=color_major)
 
         # break_line(ax, np.arange(x_min,x_max,x_grid_size), np.arange(y_min,y_max,y_grid_size), line_width=2, probability=0.05)
         # adjust_width(ax, np.arange(x_min,x_max,x_grid_size), np.arange(y_min,y_max,y_grid_size), width_variation=0.2, probability=0.05)
