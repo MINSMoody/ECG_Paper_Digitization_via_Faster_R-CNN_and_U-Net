@@ -11,14 +11,14 @@ import pickle
 
 # from mmseg.registry import DATASETS
 # from mmseg.datasets import BaseSegDataset
-# # from mmseg.apis import MMSegInferencer
+# from mmseg.apis import MMSegInferencer
+from mmengine import Registry
 
-# # from mmdet.apis import DetInferencer
-# from mmseg.apis import inference_model, init_model
+# from mmdet.apis import DetInferencer
+# from mmseg.apis import init_model, inference_model
 
 from concurrent.futures import ThreadPoolExecutor
 
-# import threading
 import multiprocessing
 
 import torch
@@ -34,7 +34,6 @@ from mmdet.utils import setup_cache_size_limit_of_dynamo
 import mmcv
 from mmdet.apis import init_detector, inference_detector
 from helper_code import get_num_samples, get_signal_names, get_image_files
-from scipy import interpolate
 
 import random
 from TeamCode.src.ecg_image_generator.helper_functions import find_records
@@ -207,35 +206,35 @@ def filter_boxes(pred_bboxes, pred_labels, pred_scores, pred_masks):
         b2_area = (b2_x2 - b2_x1 + 1) * (b2_y2 - b2_y1 + 1)
         
         return inter_area / min(b1_area, b2_area)
-    def bbox_iou(box1, box2):
-        """
-        Calculate the Intersection of Unions (IoUs) between bounding boxes.
-        Args:
-            box1 (list): bounding box formatted as [x1, y1, x2, y2]
-            box2 (list): bounding box formatted as [x1, y1, x2, y2]
-        Returns:
-            float: IoU value
-        """
-        # Get the coordinates of bounding boxes
-        b1_x1, b1_y1, b1_x2, b1_y2 = box1
-        b2_x1, b2_y1, b2_x2, b2_y2 = box2
+    # def bbox_iou(box1, box2):
+    #     """
+    #     Calculate the Intersection of Unions (IoUs) between bounding boxes.
+    #     Args:
+    #         box1 (list): bounding box formatted as [x1, y1, x2, y2]
+    #         box2 (list): bounding box formatted as [x1, y1, x2, y2]
+    #     Returns:
+    #         float: IoU value
+    #     """
+    #     # Get the coordinates of bounding boxes
+    #     b1_x1, b1_y1, b1_x2, b1_y2 = box1
+    #     b2_x1, b2_y1, b2_x2, b2_y2 = box2
 
-        # get the corrdinates of the intersection rectangle
-        inter_rect_x1 = max(b1_x1, b2_x1)
-        inter_rect_y1 = max(b1_y1, b2_y1)
-        inter_rect_x2 = min(b1_x2, b2_x2)
-        inter_rect_y2 = min(b1_y2, b2_y2)
+    #     # get the corrdinates of the intersection rectangle
+    #     inter_rect_x1 = max(b1_x1, b2_x1)
+    #     inter_rect_y1 = max(b1_y1, b2_y1)
+    #     inter_rect_x2 = min(b1_x2, b2_x2)
+    #     inter_rect_y2 = min(b1_y2, b2_y2)
 
-        # Intersection area
-        inter_area = max(inter_rect_x2 - inter_rect_x1 + 1, 0) * max(inter_rect_y2 - inter_rect_y1 + 1, 0)
+    #     # Intersection area
+    #     inter_area = max(inter_rect_x2 - inter_rect_x1 + 1, 0) * max(inter_rect_y2 - inter_rect_y1 + 1, 0)
 
-        # Union Area
-        b1_area = (b1_x2 - b1_x1 + 1) * (b1_y2 - b1_y1 + 1)
-        b2_area = (b2_x2 - b2_x1 + 1) * (b2_y2 - b2_y1 + 1)
+    #     # Union Area
+    #     b1_area = (b1_x2 - b1_x1 + 1) * (b1_y2 - b1_y1 + 1)
+    #     b2_area = (b2_x2 - b2_x1 + 1) * (b2_y2 - b2_y1 + 1)
 
-        iou = inter_area / (b1_area + b2_area - inter_area)
+    #     iou = inter_area / (b1_area + b2_area - inter_area)
 
-        return iou
+    #     return iou
     # # loop over bounding boxes, if find some boxes have iou > 0.5, filter out the one with lower score
 
 
@@ -568,8 +567,7 @@ def generate_data(data_folder, model_folder, data_amount, verbose):
     args = Namespace(**args_dict)
     random.seed(args.seed)
     args.input_directory = data_folder
-    args.output_directory = os.path.join(data_folder, "training_data")
-    os.makedirs(args.output_directory, exist_ok=True)
+    args.output_directory = data_folder
     args.max_num_images = data_amount
     if not os.path.isabs(args.input_directory):
         args.input_directory = os.path.normpath(os.path.join(os.getcwd(), args.input_directory))
@@ -777,8 +775,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
     def from_folder(cls, model_folder, verbose):
          # Create an instance of the class
         instance = cls()
-        # instance.work_dir = model_folder
-        instance.config = os.path.join(model_folder, "maskrcnn_res101.py")
+        instance.det_config = os.path.join(model_folder, "maskrcnn_res101.py")
         # Construct checkpoint path based on the model_folder parameter
         maskrcnn_checkpoint_log = os.path.join(model_folder, 'last_checkpoint')
         with open(maskrcnn_checkpoint_log, 'r') as f:
@@ -788,7 +785,11 @@ class OurDigitizationModel(AbstractDigitizationModel):
         # load model parameters from json file
         with open(os.path.join(model_folder, 'ecg_params.json'), 'r') as f:
             ecg_params = json.load(f)['segmentation']
-        instance.model = init_detector(instance.config, maskrcnn_checkpoint_file, device=dev)
+        
+
+
+
+        instance.model = init_detector(instance.det_config, maskrcnn_checkpoint_file, device=dev)
         instance.unet = ECGPredictor('resunet10', os.path.join(model_folder,'segmentation/segmentation_model.pth'), size=ecg_params['crop'], cbam=ecg_params['cbam'])
         # instance.mmseg = init_model(config='/scratch/hshang/moody/mmsegmentation_MINS/demo/deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive-ecg.py', checkpoint='/scratch/hshang/moody/mmsegmentation_MINS/demo/work_dirs/ECG/iter_400.pth', device=dev)
         if verbose:
@@ -950,7 +951,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
         # remove image gradient
         # img_no_grad = remove_image_gradients(img)
         # mmcv.imwrite(img_no_grad, os.path.join(record, 'processed.png'))
-        result = inference_detector(self.model, img)
+        with Registry('scope').switch_scope_and_registry('mmdet'):
+            result = inference_detector(self.model, img)
         result_dict = result.to_dict()
         pred = result_dict['pred_instances']
         bboxes = pred['bboxes'].to(torch.int).cpu().detach().numpy()
@@ -961,40 +963,19 @@ class OurDigitizationModel(AbstractDigitizationModel):
         scores = pred['scores'].cpu().detach().numpy()
         labels = pred['labels'].cpu().detach().numpy()
         
-        
-        
-        # patches = crop_from_bbox(bboxes, img)
-        
-        # print(f"patches shape: {patches[0].shape}")
 
         bboxes, labels, scores, masks = filter_boxes(bboxes, labels, scores, masks)
-        # assert len(bboxes) >= 12, f"Expected at least 12 bboxes, got {len(bboxes)}"
-        # assert len(bboxes) == masks.shape[0], f"Expected {len(bboxes)} bboxes, got {masks.shape[0]}"
         image = img/255.0
-        # assert bboxes.shape == (13, 4), f"Expected shape (13, 4), got {bboxes.shape}"
-        
         
         # cfg = Config.fromfile('/scratch/hshang/moody/mmsegmentation_MINS/demo/deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive-ecg.py')
-        # # Init the model from the config and the checkpoint
+        # Init the model from the config and the checkpoint
         # checkpoint_path = '/scratch/hshang/moody/mmsegmentation_MINS/demo/work_dirs/ECG/iter_400.pth'
 
         # Load models into memory
         # inferencer = MMSegInferencer(model=cfg, weights=checkpoint_path)
         # Inference
         # crop the images with the bboxes and put them into an array
-        # to_be_readout = np.zeros((image.shape[0], image.shape[1], len(bboxes)))
-        # print(to_be_readout.shape)
-        # for i, (x1, y1, x2, y2) in enumerate(bboxes):
-        #     lead = img[y1:y2, x1:x2, :]
-        #     cv2.imwrite(f'lead_{i}.png', lead)
-        #     # print(lead.shape)
-        #     # result = inferencer(lead)['predictions']
-
-        #     result = inference_model(self.mmseg, lead)
-        #     print(result.keys())
-        #     cv2.imwrite(f'leadout_{i}.png', result)
-        #     # print(result.shape)
-        #     to_be_readout[y1:y2, x1:x2, i] = result
+        
         mV_pixel = (25.4 *8.5*0.5)/(masks[0].shape[0]*5) #hardcoded for now
         # # mV_pixel = (1.5*25.4 *8.5*0.5)/(masks[0].shape[0]*5)
         header_path = hc.get_header_file(record)
@@ -1014,17 +995,24 @@ class OurDigitizationModel(AbstractDigitizationModel):
             empty_signals_np[9:12,3*lead_length:4*lead_length] = 0
             return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
         
+        # to_be_readout = np.zeros((image.shape[0], image.shape[1], len(bboxes)))
+        # print(to_be_readout.shape)
+        # for i, (x1, y1, x2, y2) in enumerate(bboxes):
+            # lead = img[y1:y2, x1:x2, :]
+            # cv2.imwrite(f'lead_{i}.png', lead)
+            # print(lead.shape)
+            # result = inferencer(lead)['predictions']
+
+            # result = inference_model(self.mmseg, lead)
+            # from mmseg.apis import show_result_pyplot
+            # vis_image = show_result_pyplot(self.mmseg, lead, result, out_file='work_dirs/result.png')
+            # cv2.imwrite(f'leadout_{i}.png', result)
+            # print(result.shape)
+            # to_be_readout[y1:y2, x1:x2, i] = result.
+        
         to_be_readout = self.unet.run(image, sorted_bboxes.astype(int)) # float
 
         to_be_readout = np.where(to_be_readout > 0.5, True, False)
-        # print(min(to_be_readout[0]), max(to_be_readout[0]))
-        # assert len(to_be_readout) == 13, f"Expected 13 signals, got {len(to_be_readout)}"
-        # assert len(bboxes) == len(to_be_readout), f"Expected {len(bboxes)} signals, got {len(to_be_readout)}"
-        # assert to_be_readout[0].shape == (img.shape[0], img.shape[1]), f"Expected shape {(img.shape[0], img.shape[1])}, got {to_be_readout[0].shape}"
-        
-        
-        # assert to_be_readout.shape == masks.shape, f"Expected shape {masks.shape}, got {to_be_readout.shape}"
-        # assert to_be_readout.shape[0] == 13, f"Expected 13 signals, got {to_be_readout.shape[0]}"
         
         
 

@@ -16,6 +16,8 @@ RUN mim install "mmengine==0.10.4"
 RUN mim install "mmcv==2.0.1" 
 RUN mim install "mmdet==3.1.0"
 
+
+
 ## DO NOT EDIT these 3 lines.
 RUN mkdir /challenge
 COPY ./ /challenge

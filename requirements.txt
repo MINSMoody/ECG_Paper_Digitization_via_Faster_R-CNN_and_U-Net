@@ -8,5 +8,5 @@ imutils
 imgaug
 qrcode
 imageio
-pywt
 matplotlib
+PyWavelets 
