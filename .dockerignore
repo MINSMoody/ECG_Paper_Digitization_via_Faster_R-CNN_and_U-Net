@@ -1,2 +1,7 @@
 TeamCode/tests/
 .git/
+TeamCode/src/configs_ckpts/epoch_3.pth
+TeamCode/src/configs_ckpts/epoch_6.pth
+TeamCode/src/configs_ckpts/epoch_9.pth
+TeamCode/src/configs_ckpts/scan_snr0.2/
+weird/
