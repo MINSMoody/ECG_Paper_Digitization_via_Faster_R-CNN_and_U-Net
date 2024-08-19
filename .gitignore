@@ -22,3 +22,16 @@ TeamCode/tests/resources/example_data/masks/
 TeamCode/src/model/2024*/
 TeamCode/tests/resources/example_data/cropped_img/
 TeamCode/tests/resources/example_data/cropped_masks/
+TeamCode/tests/resources/test_on_scan/
+TeamCode/tests/resources/test_scan/
+TeamCode/tests/resources/test_training copy/
+TeamCode/tests/resources/test_training/
+TeamCode/tests/resources/to_print/
+TeamCode/tests/test_on_scan_res/
+bbox.png
+data_tes_lrhr/
+weird/
+TeamCode/src/work_dirs/
+TeamCode/tests/resources/photoscan/
+TeamCode/tests/resources/scanned_data/
+TeamCode/tests/resources/test_data_gen/
