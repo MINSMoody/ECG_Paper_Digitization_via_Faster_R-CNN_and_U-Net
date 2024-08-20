@@ -11,7 +11,7 @@ import pickle
 
 # from mmseg.registry import DATASETS
 
-from mmengine import Registry
+# from mmengine import Registry
 # from mmseg.datasets import BaseSegDataset
 # from mmseg.apis import init_model, inference_model
 # from mmseg.apis import show_result_pyplot
@@ -44,7 +44,6 @@ import json
 from argparse import Namespace
 
 import os.path as osp
-import numpy as np
 from mmcv import imread, imwrite
 import mmengine
 from tqdm.auto import tqdm
@@ -55,7 +54,8 @@ from pycocotools import mask as maskutils
 import random
 
 import pywt
-import numpy as np
+
+from scipy.signal import butter, lfilter
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' 
 warnings.filterwarnings("ignore")
@@ -201,36 +201,6 @@ def filter_boxes(pred_bboxes, pred_labels, pred_scores, pred_masks):
         b2_area = (b2_x2 - b2_x1 + 1) * (b2_y2 - b2_y1 + 1)
         
         return inter_area / min(b1_area, b2_area)
-    # def bbox_iou(box1, box2):
-    #     """
-    #     Calculate the Intersection of Unions (IoUs) between bounding boxes.
-    #     Args:
-    #         box1 (list): bounding box formatted as [x1, y1, x2, y2]
-    #         box2 (list): bounding box formatted as [x1, y1, x2, y2]
-    #     Returns:
-    #         float: IoU value
-    #     """
-    #     # Get the coordinates of bounding boxes
-    #     b1_x1, b1_y1, b1_x2, b1_y2 = box1
-    #     b2_x1, b2_y1, b2_x2, b2_y2 = box2
-
-    #     # get the corrdinates of the intersection rectangle
-    #     inter_rect_x1 = max(b1_x1, b2_x1)
-    #     inter_rect_y1 = max(b1_y1, b2_y1)
-    #     inter_rect_x2 = min(b1_x2, b2_x2)
-    #     inter_rect_y2 = min(b1_y2, b2_y2)
-
-    #     # Intersection area
-    #     inter_area = max(inter_rect_x2 - inter_rect_x1 + 1, 0) * max(inter_rect_y2 - inter_rect_y1 + 1, 0)
-
-    #     # Union Area
-    #     b1_area = (b1_x2 - b1_x1 + 1) * (b1_y2 - b1_y1 + 1)
-    #     b2_area = (b2_x2 - b2_x1 + 1) * (b2_y2 - b2_y1 + 1)
-
-    #     iou = inter_area / (b1_area + b2_area - inter_area)
-
-    #     return iou
-    # # loop over bounding boxes, if find some boxes have iou > 0.5, filter out the one with lower score
 
 
     if len(pred_bboxes) >= 13:
@@ -506,7 +476,7 @@ def wavelet_denoising(signal, wavelet='db4', level=3):
     denoised_coeffs = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
     return pywt.waverec(denoised_coeffs, wavelet)
 
-from scipy.signal import butter, lfilter
+
 def readOut(num_samples, masks, nrows, bboxes, mV_pixel, sampling_frequency): # one more input: sampling_frequency
     num_signals = 12
     signals_np = np.full((num_signals, num_samples), np.nan)
