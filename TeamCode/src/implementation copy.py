@@ -9,12 +9,12 @@ import os
 import cv2
 import pickle
 
-# from mmseg.registry import DATASETS
+from mmseg.registry import DATASETS
 
-# from mmengine import Registry
-# from mmseg.datasets import BaseSegDataset
-# from mmseg.apis import init_model, inference_model
-# from mmseg.apis import show_result_pyplot
+from mmengine import Registry
+from mmseg.datasets import BaseSegDataset
+from mmseg.apis import init_model, inference_model
+from mmseg.apis import show_result_pyplot
 
 
 
@@ -395,51 +395,45 @@ def bboxes_sorting(bboxes, img_height):
 #format = [['I', 'aVR', 'V1', 'V4'], ['II', 'aVL', 'V2', 'V5'], ['III', 'aVF', 'V3', 'V6'], ['II']] # format is hardcoded for now
 #format = ['I', 'aVR', 'V1', 'V4', 'II', 'aVL', 'V2', 'V5', 'III', 'aVF', 'V3', 'V6']
 #fullmode = 'II'
-# import matplotlib.pyplot as plt
-
-
-
-
-
+import matplotlib.pyplot as plt
 def crop_from_bbox(bbox, mask, mV_pixel):
+    
     bbox = bbox.astype(int)
+    # draw bbox on to the mask and save it
+    # Assuming mask and bbox are defined
+    # mask = (mask * 255).astype(np.uint8)
+
+    # # Convert grayscale mask to RGB to draw a colored rectangle
+    # mask_rgb = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB)
+
+    # # Draw rectangle on the RGB image
+    # cv2.rectangle(mask_rgb, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (255, 0, 0), 2)
+
+    # Display the image
+    # plt.imshow(mask_rgb)
+    # plt.title(f'bbox: {bbox}')
+    # plt.savefig('bbox.png')
+    # plt.show()
     ecg_segment = mask[bbox[1]:bbox[3]+1, bbox[0]:bbox[2]+1]
+    if np.sum(ecg_segment, axis=1).all() == 0:
+        warnings.warn("All empty in ecg segment, wrong bbox", UserWarning)
+        # raise ValueError("All empty in ecg segment, wrong bbox")
+        # return np.zeros(ecg_segment.shape[1])
 
-    # Early return if the segment is entirely empty
-    if np.sum(ecg_segment) == 0:
-        warnings.warn("All empty in ECG segment, returning NaN array", UserWarning)
-        return np.full(ecg_segment.shape[1], np.nan)
-
-    # Compute the weighting matrix
-    weighting_matrix = np.linspace(
-        (bbox[3] - bbox[1]) * mV_pixel / 2,
-        -1 * (bbox[3] - bbox[1]) * mV_pixel / 2,
-        num=ecg_segment.shape[0]
-    ).reshape(-1, 1)
+    weighting_matrix = np.linspace((bbox[3] - bbox[1])*mV_pixel/2, -1*(bbox[3] - bbox[1])*mV_pixel/2, num=ecg_segment.shape[0]).reshape(-1, 1)
     weighted_ecg_segment = ecg_segment * weighting_matrix
 
-    # Calculate the numerator and denominator
     denominator = np.sum(ecg_segment, axis=0)
     numerator = np.sum(weighted_ecg_segment, axis=0)
 
-    # Initialize signal with NaNs
     signal = np.full(denominator.shape, np.nan)
-
-    # Use a small epsilon to avoid division by very small values or zero
-    epsilon = 1e-6
-    valid_idx = denominator > epsilon
+    valid_idx = denominator >= 1
     signal[valid_idx] = numerator[valid_idx] / denominator[valid_idx]
-
-    # Warn if the signal is all NaN
+    # check if signal is all nan
     if np.isnan(signal).all():
-        warnings.warn("Signal is all NaN", UserWarning)
+        warnings.warn("Signal is all nan", UserWarning)
 
     return signal
-
-
-
-
-
 
 # median method
 # def crop_from_bbox(bbox, mask, mV_pixel):
@@ -452,10 +446,7 @@ def crop_from_bbox(bbox, mask, mV_pixel):
 #     b = mV_pixel*height/2
 #     signal = [a*np.median(np.argwhere(ecg_segment[:,i]))+b if len(np.argwhere(ecg_segment[:,i]))>1 else np.nan  for i in range(ecg_segment.shape[1])]
 #     signal = np.array(signal)
-#     if np.isnan(signal).all():
-#         warnings.warn("Signal is all nan", UserWarning)
-    
-    # return signal
+#     return signal
 
 
 
@@ -472,12 +463,9 @@ def readOut(num_samples, masks, nrows, bboxes, mV_pixel, sampling_frequency): # 
     signals_np = np.full((num_signals, num_samples), np.nan)
     def process_signal(index, bboxes, masks, mV_pixel, signallen,sampling_frequency, filter=True):
         if np.isnan(bboxes[index]).any():
-            print(f'Warning: Bounding box is nan, returning zeros')
             return np.zeros(signallen)
         signal = crop_from_bbox(bboxes[index], masks[index], mV_pixel)
-        # check the number of nan in signal
-        if np.isnan(signal).sum() > 0.5*len(signal):
-            print(f'Warning: More than 50% of signal is nan, returning zeros')
+        if sum(np.isnan(signal)) > 0.5*len(signal):
             return np.zeros(signallen)
         signal = interpolate_nan(signal) - np.mean(signal)
         try :
@@ -545,7 +533,7 @@ def process_single_file(full_header_file, full_recording_file, args, original_ou
 
     return run_single_file(args)
 
-def generate_data(data_folder,  config_folder, data_amount, verbose):
+def generate_data(data_folder, config_folder, data_amount, verbose):
     with open(os.path.join(config_folder, 'data_format.json'), 'r') as f:
         args_dict = json.load(f)
     args = Namespace(**args_dict)
@@ -837,70 +825,62 @@ class OurDigitizationModel(AbstractDigitizationModel):
         if verbose:
             print("Detection model training completed.")
 
-    def train_segmentation_model(self, data_folder, model_folder, verbose):
-        if verbose:
-            print("Training segmentation model...")
+    # def train_segmentation_model(self, data_folder, model_folder, verbose):
+    #     if verbose:
+    #         print("Training segmentation model...")
         
-        param_file = os.path.join(self.config_dir, 'ecg_params.json')
-        param_set = "segmentation"
-        unet_data_dir = os.path.join(data_folder, 'processed_data', 'cropped_img')
-        ecg = ECGSegment(
-            param_file=param_file,
-            param_set=param_set
-        )
-        ecg.run(
-            data_dir=unet_data_dir,
-            models_dir=model_folder,
-            cv=3,
-            resume_training=True,
-            checkpoint_path=os.path.join(self.config_dir, 'segmentation_base_model.pth')
-        )
+    #     param_file = os.path.join(self.config_dir, 'ecg_params.json')
+    #     param_set = "segmentation"
+    #     unet_data_dir = os.path.join(data_folder, 'processed_data', 'cropped_img')
+    #     ecg = ECGSegment(
+    #         param_file=param_file,
+    #         param_set=param_set
+    #     )
+    #     ecg.run(
+    #         data_dir=unet_data_dir,
+    #         models_dir=model_folder,
+    #         cv=3,
+    #         resume_training=True,
+    #         checkpoint_path=os.path.join(self.config_dir, 'segmentation_base_model.pth')
+    #     )
         
-        if verbose:
-            print("Segmentation model training completed.")
+    #     if verbose:
+    #         print("Segmentation model training completed.")
     
-    # def train_mmseg_model(self, data_folder, model_folder, verbose):
-    #     classes = ('bg', 'signal')
-    #     palette = [[255,255,255], [0,0,0]]
+    def train_mmseg_model(self, data_folder, model_folder, verbose):
+        # split train/val set randomly
+        data_root = '/scratch/hshang/moody/train_set_hr'
+        split_dir = 'splits'
+        img_dir = 'cropped_img'
+        ann_dir = 'cropped_masks'
+        mmengine.mkdir_or_exist(osp.join(data_root, split_dir))
+        filename_list = [osp.splitext(filename)[0] for filename in mmengine.scandir(
+            osp.join(data_root, ann_dir), suffix='.png')]
+        with open(osp.join(data_root, split_dir, 'train.txt'), 'w') as f:
+        # select first 4/5 as train set
+            train_length = int(len(filename_list)*4/5)
+            f.writelines(line + '\n' for line in filename_list[:train_length])
+        with open(osp.join(data_root, split_dir, 'val.txt'), 'w') as f:
+        # select last 1/5 as train set
+            f.writelines(line + '\n' for line in filename_list[train_length:])
+        # from mmengine import Config
+        cfg = Config.fromfile('TeamCode/src/configs_ckpts/unet_deeplab.py')
 
+        cfg.data_root = os.path.join(data_folder, 'processed_data')
+        cfg.train_dataloader.dataset.data_root = cfg.data_root
+        cfg.val_dataloader.dataset.data_root = cfg.data_root
+        cfg.test_dataloader.dataset.data_root = cfg.data_root
+        cfg.load_from = os.path.join(self.config_dir,"original_pretrained_weights", "deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive_20211210_201825-6bf0efd7.pth")
+        cfg.work_dir = model_folder
 
-    #     @DATASETS.register_module()
-    #     class ECGDataset(BaseSegDataset):
-    #         METAINFO = dict(classes = classes, palette = palette)
-    #         def __init__(self, **kwargs):
-    #             super().__init__(img_suffix='.png', seg_map_suffix='.png', **kwargs)
-        
-    #     # split train/val set randomly
-    #     import os.path as osp
-    #     data_root = '/scratch/hshang/moody/train_set_hr'
-    #     split_dir = 'splits'
-    #     img_dir = 'cropped_img'
-    #     ann_dir = 'cropped_masks'
-    #     mmengine.mkdir_or_exist(osp.join(data_root, split_dir))
-    #     filename_list = [osp.splitext(filename)[0] for filename in mmengine.scandir(
-    #         osp.join(data_root, ann_dir), suffix='.png')]
-    #     with open(osp.join(data_root, split_dir, 'train.txt'), 'w') as f:
-    #     # select first 4/5 as train set
-    #         train_length = int(len(filename_list)*4/5)
-    #         f.writelines(line + '\n' for line in filename_list[:train_length])
-    #     with open(osp.join(data_root, split_dir, 'val.txt'), 'w') as f:
-    #     # select last 1/5 as train set
-    #         f.writelines(line + '\n' for line in filename_list[train_length:])
-    #     # from mmengine import Config
-    #     cfg = Config.fromfile('/scratch/hshang/moody/mmsegmentation_MINS/demo/deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive-ecg.py')
+        runner = Runner.from_cfg(cfg)
 
-    #     cfg.data_root = data_folder
-
-    #     # from mmengine.runner import Runner
-
-    #     runner = Runner.from_cfg(cfg)
-
-    #     runner.train()
+        runner.train()
 
     def train_model(self, data_folder, model_folder, verbose):
         
         # multiprocessing.set_start_method('spawn')
-        # generate_data(data_folder, self.config_dir, 5000, verbose)
+        generate_data(data_folder, self.config_dir, 5000, verbose)
         prepare_data_for_training(data_folder, verbose)
         
         if verbose:

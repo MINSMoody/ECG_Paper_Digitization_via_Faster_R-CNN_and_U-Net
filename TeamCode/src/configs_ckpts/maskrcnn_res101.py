@@ -1,6 +1,6 @@
 auto_scale_lr = dict(base_batch_size=16, enable=False)
 backend_args = None
-data_root = '/scratch/hshang/moody/final_training_set'
+data_root = '/scratch/hshang/moody/final_training_set/mrcnn_data'
 dataset_type = 'CocoDataset'
 default_hooks = dict(
     checkpoint=dict(interval=3, type='CheckpointHook'),
@@ -15,7 +15,7 @@ env_cfg = dict(
     dist_cfg=dict(backend='nccl'),
     mp_cfg=dict(mp_start_method='fork', opencv_num_threads=0))
 launcher = 'none'
-load_from = '/scratch/hshang/moody/final_phase_submission/official-phase-mins-eth/TeamCode/src/checkpoints/mask_rcnn_r101_caffe_fpn_1x_coco_20200601_095758-805e06c1.pth'
+load_from = 'TeamCode/src/configs_ckpts/original_pretrained_weights/mask_rcnn_r101_caffe_fpn_1x_coco_20200601_095758-805e06c1.pth'
 log_level = 'INFO'
 log_processor = dict(by_epoch=True, type='LogProcessor', window_size=50)
 metainfo = dict(
@@ -31,7 +31,8 @@ model = dict(
         depth=101,
         frozen_stages=1,
         init_cfg=dict(
-            checkpoint='TeamCode/src/checkpoints/resnet101_msra-6cc46731.pth',
+            checkpoint=
+            'TeamCode/src/configs_ckpts/original_pretrained_weights/resnet101_msra-6cc46731.pth',
             type='Pretrained'),
         norm_cfg=dict(requires_grad=False, type='BN'),
         norm_eval=True,
@@ -294,7 +295,7 @@ train_dataloader = dict(
         ann_file='annotation_coco.json',
         backend_args=None,
         data_prefix=dict(img=''),
-        data_root='/scratch/hshang/moody/final_training_set',
+        data_root='/scratch/hshang/moody/final_training_set/mrcnn_data',
         filter_cfg=dict(filter_empty_gt=True, min_size=32),
         metainfo=dict(classes=('ecg_lead', ), palette=[
             (
