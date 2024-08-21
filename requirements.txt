@@ -9,3 +9,5 @@ matplotlib
 PyWavelets 
 scipy
 numpy==1.24.4
+qrcode
+heartpy
