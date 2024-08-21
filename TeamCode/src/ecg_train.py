@@ -34,6 +34,9 @@ class ECGTrainer(object):
         model = build_model(self.model_name, self.cbam)
         if self.cuda:
             model.cuda()
+            print('training unet with cuda')
+        else:
+            print('training unet without cuda')
         return model
 
     def __get_criterion(self):
