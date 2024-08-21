@@ -1,7 +1,7 @@
-# FROM pytorch/pytorch:1.12.1-cuda11.3-cudnn8-runtime 
+FROM pytorch/pytorch:1.12.1-cuda11.2-cudnn8-runtime 
 ## this is python 3.7
 
-FROM pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
+# FROM pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
 ## this is python 3.10.8
 
 
