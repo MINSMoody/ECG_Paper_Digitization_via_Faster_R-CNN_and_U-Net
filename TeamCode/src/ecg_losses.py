@@ -152,9 +152,7 @@ class ComboLoss(nn.Module):
         self.jaccard = JaccardLoss(per_image=False)
         self.lovasz = LovaszLoss(per_image=per_image)
         self.lovasz_sigmoid = LovaszLossSigmoid(per_image=per_image)
-        self.focal = FocalLoss2d()
-        self.bbox_iou = BBoxIoULoss()
-        self.bbox_mse = BBoxMSELoss()
+        self.focal = FocalLoss2d(gamma=2, alpha=0.3)
         self.mapping = {'bce': self.bce,
                         'dice': self.dice,
                         'focal': self.focal,
@@ -197,24 +195,6 @@ class ComboLoss(nn.Module):
             self.values[k] = val
             loss += self.weights[k] * val
         return loss.clamp(min=1e-5)
-
-class CombinedLoss(nn.Module):
-    def __init__(self, seg_weights=None, bbox_weights=None, size_average=True):
-        super().__init__()
-        self.seg_weights = seg_weights or {'dice': 1.0, 'focal': 1.0}
-        self.bbox_weights = bbox_weights or {'mse': 1.0, 'iou': 1.0}
-        self.segmentation_loss = ComboLoss(weights=self.seg_weights)
-        self.bbox_iou_loss = BBoxIoULoss()
-        self.bbox_mse_loss = BBoxMSELoss()
-
-    def forward(self, seg_outputs, seg_targets, bbox_outputs, bbox_targets):
-        # Segmentation Loss
-        seg_loss = self.segmentation_loss(seg_outputs, seg_targets)
-
-        # Bounding Box Loss
-        bbox_loss = self.bbox_mse_loss(bbox_outputs, bbox_targets) + self.bbox_iou_loss(bbox_outputs, bbox_targets)
-
-        return seg_loss + bbox_loss
 
 
 def lovasz_grad(gt_sorted):
@@ -367,20 +347,50 @@ class LovaszLossSigmoid(nn.Module):
         return lovasz_sigmoid(outputs, targets, per_image=self.per_image, ignore=self.ignore_index)
 
 
+# class FocalLoss2d(nn.Module):
+#     def __init__(self, gamma=2, ignore_index=255):
+#         super().__init__()
+#         self.gamma = gamma
+#         self.ignore_index = ignore_index
+
+#     def forward(self, outputs, targets):
+#         outputs = outputs.contiguous()
+#         targets = targets.contiguous()
+#         eps = 1e-8
+#         non_ignored = targets.view(-1) != self.ignore_index
+#         targets = targets.view(-1)[non_ignored].float()
+#         outputs = outputs.contiguous().view(-1)[non_ignored]
+#         outputs = torch.clamp(outputs, eps, 1. - eps)
+#         targets = torch.clamp(targets, eps, 1. - eps)
+#         pt = (1 - targets) * (1 - outputs) + targets * outputs
+#         return (-(1. - pt) ** self.gamma * torch.log(pt)).mean()
+
 class FocalLoss2d(nn.Module):
-    def __init__(self, gamma=2, ignore_index=255):
-        super().__init__()
+    def __init__(self, gamma=2, alpha=None, ignore_index=255):
+        super(FocalLoss2d, self).__init__()
         self.gamma = gamma
+        self.alpha = alpha
         self.ignore_index = ignore_index
 
     def forward(self, outputs, targets):
         outputs = outputs.contiguous()
         targets = targets.contiguous()
         eps = 1e-8
+        
         non_ignored = targets.view(-1) != self.ignore_index
         targets = targets.view(-1)[non_ignored].float()
         outputs = outputs.contiguous().view(-1)[non_ignored]
+        
         outputs = torch.clamp(outputs, eps, 1. - eps)
         targets = torch.clamp(targets, eps, 1. - eps)
+        
         pt = (1 - targets) * (1 - outputs) + targets * outputs
-        return (-(1. - pt) ** self.gamma * torch.log(pt)).mean()
+        
+        # If alpha is provided, use it to adjust the loss
+        if self.alpha is not None:
+            alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
+            loss = -alpha_t * (1 - pt) ** self.gamma * torch.log(pt)
+        else:
+            loss = -(1 - pt) ** self.gamma * torch.log(pt)
+        
+        return loss.mean()

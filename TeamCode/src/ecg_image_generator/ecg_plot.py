@@ -388,7 +388,7 @@ def ecg_plot(
                     x1, y1 = bb.x0*resolution/fig.dpi, bb.y0*resolution/fig.dpi
                     x2, y2 = bb.x1*resolution/fig.dpi, bb.y1*resolution/fig.dpi
                     # don't include dc pulse in the bounding box
-                    x1 += dc_offset
+                    x1 += len(x_range)
                     
                 
         elif(i%columns == 0):
@@ -406,7 +406,7 @@ def ecg_plot(
                     x1, y1 = bb.x0*resolution/fig.dpi, bb.y0*resolution/fig.dpi
                     x2, y2 = bb.x1*resolution/fig.dpi, bb.y1*resolution/fig.dpi
                     # don't include dc pulse in the bounding box
-                    x1 += dc_offset
+                    x1 += len(x_range)
 
         t1 = ax.plot(np.arange(0,len(ecg[leadName])*step,step) + x_offset + dc_offset + x_gap, 
                 ecg[leadName] + y_offset,
@@ -512,6 +512,7 @@ def ecg_plot(
                     bb = t1[0].get_window_extent()                                                
                     x1, y1 = bb.x0*resolution/fig.dpi, bb.y0*resolution/fig.dpi
                     x2, y2 = bb.x1*resolution/fig.dpi, bb.y1*resolution/fig.dpi
+                    x1 += len(x_range)
         
         dc_full_lead_offset = 0 
         if(show_dc_pulse):
