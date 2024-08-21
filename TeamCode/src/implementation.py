@@ -7,9 +7,6 @@ import helper_code as hc
 import numpy as np
 import os
 
-# import pickle
-# import heartpy as hp
-
 # from mmseg.registry import DATASETS
 
 # from mmengine import Registry
@@ -781,19 +778,26 @@ class OurDigitizationModel(AbstractDigitizationModel):
         maskrcnn_checkpoint_log = os.path.join(model_folder, 'last_checkpoint')
         try:
             with open(maskrcnn_checkpoint_log, 'r') as f:
-                first_line = f.readline().strip()
                 first_line = f.readline().strip()  # Read the first line and strip any whitespace/newline characters
                 model_name = os.path.basename(first_line)
                 
-                if os.path.exists(first_line):
+                if os.path.exists(first_line) and first_line.endswith('.pth'):
                     maskrcnn_checkpoint_file = first_line
-                elif os.path.exists(os.path.join(model_folder, model_name)):
+                    print(f"1. Model loaded from model folder")
+                    print(f"Model name: {model_name}, first line: {first_line}")
+                elif os.path.exists(os.path.join(model_folder, model_name)) and model_name.endswith('.pth'):
                     maskrcnn_checkpoint_file = os.path.join(model_folder, model_name)
-                elif os.path.exists(os.path.join(instance.config_dir, model_name)):
+                    print(f"2. Model loaded from model folder")
+                    print(f"Model name: {model_name}, first line: {first_line}")
+                elif os.path.exists(os.path.join(instance.config_dir, model_name)) and model_name.endswith('.pth'):
                     maskrcnn_checkpoint_file = os.path.join(instance.config_dir, model_name)
+                    print(f"3. Model loaded from config folder")
+                    print(f"Model name: {model_name}, first line: {first_line}")
                 else:
                     # Fall back to a default checkpoint
                     maskrcnn_checkpoint_file = os.path.join(instance.config_dir, 'epoch_24.pth')
+                    print(f"4. Model loaded from default checkpoint")
+                    print(f"Model name: {model_name}, first line: {first_line}")
         except Exception as e:
             print(f"Error reading checkpoint file: {e}")
             maskrcnn_checkpoint_file = os.path.join(instance.config_dir, 'epoch_24.pth')
