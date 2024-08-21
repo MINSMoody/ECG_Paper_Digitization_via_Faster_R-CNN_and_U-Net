@@ -6,8 +6,9 @@ from TeamCode.src.verify_environment import verify_environment
 import helper_code as hc
 import numpy as np
 import os
-import cv2
+
 import pickle
+import heartpy as hp
 
 # from mmseg.registry import DATASETS
 
@@ -458,7 +459,6 @@ def crop_from_bbox(bbox, mask, mV_pixel):
     # return signal
 
 
-
 def wavelet_denoising(signal, wavelet='db4', level=3):
     coeffs = pywt.wavedec(signal, wavelet, level=level)
     sigma = np.median(np.abs(coeffs[-1])) / 0.6745
@@ -466,6 +466,28 @@ def wavelet_denoising(signal, wavelet='db4', level=3):
     denoised_coeffs = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
     return pywt.waverec(denoised_coeffs, wavelet)
 
+import scipy.signal as signal
+
+def detect_pan_tompkins(ecg_signal, sampling_rate):
+    # 1. Bandpass filter
+    b, a = signal.butter(1, [5/(0.5*sampling_rate), 15/(0.5*sampling_rate)], btype='band')
+    filtered_ecg = signal.filtfilt(b, a, ecg_signal)
+    
+    # 2. Differentiation
+    diff_signal = np.diff(filtered_ecg)
+    
+    # 3. Squaring
+    squared_signal = diff_signal ** 2
+    
+    # 4. Moving Window Integration
+    window_size = int(0.12 * sampling_rate)  # Typical window size of 120ms
+    mwa_signal = np.convolve(squared_signal, np.ones(window_size)/window_size, mode='same')
+    
+    # 5. Thresholding and peak detection
+    threshold = np.mean(mwa_signal) * 0.5  # Example threshold value
+    peaks, _ = signal.find_peaks(mwa_signal, height=threshold, distance=sampling_rate*0.2)
+    peaks = np.where(peaks == True)
+    return peaks
 
 def readOut(num_samples, masks, nrows, bboxes, mV_pixel, sampling_frequency): # one more input: sampling_frequency
     num_signals = 12
@@ -479,11 +501,23 @@ def readOut(num_samples, masks, nrows, bboxes, mV_pixel, sampling_frequency): # 
         if np.isnan(signal).sum() > 0.5*len(signal):
             print(f'Warning: More than 50% of signal is nan, returning zeros')
             return np.zeros(signallen)
+        pan_tompkins = False
+        if np.isnan(signal).sum() < 0.1*len(signal):
+            print(f'Less than 10% of signal is nan, good quality and applying pan_tompkins')
+            pan_tompkins = True
         signal = interpolate_nan(signal) - np.mean(signal)
         try :
             signal = apply_savgol_filter(signal)
         except Exception as e:
             print(f'Error in savgol filter: {e}')
+        if pan_tompkins:
+            try:
+                scaling_factor = 1.2
+                peaks = detect_pan_tompkins(signal, sampling_frequency)
+                print(f'Found {len(peaks)} peaks, rescaling signal')
+                signal[peaks] = signal[peaks] * scaling_factor
+            except Exception as e:
+                print(f'Error in pan tompkins: {e}')
         try:
             signal = wavelet_denoising(signal)
         except Exception as e:
@@ -495,6 +529,7 @@ def readOut(num_samples, masks, nrows, bboxes, mV_pixel, sampling_frequency): # 
                 signal = downsample(signal, signallen)
         except Exception as e:
             print(f'Error in upsampling/downsampling: {e}')
+
         # low pass filter added by Yani
         try:
             if filter:
@@ -545,13 +580,14 @@ def process_single_file(full_header_file, full_recording_file, args, original_ou
 
     return run_single_file(args)
 
-def generate_data(data_folder,  config_folder, data_amount, verbose):
+def generate_data(data_folder,  config_folder, output_folder,  data_amount,  verbose):
+    print(f"generating data to {output_folder}")
     with open(os.path.join(config_folder, 'data_format.json'), 'r') as f:
         args_dict = json.load(f)
     args = Namespace(**args_dict)
     random.seed(args.seed)
     args.input_directory = data_folder
-    args.output_directory = os.path.join(data_folder, 'processed_data')
+    args.output_directory = os.path.join(output_folder, 'processed_data')
     args.max_num_images = data_amount
     if not os.path.isabs(args.input_directory):
         args.input_directory = os.path.normpath(os.path.join(os.getcwd(), args.input_directory))
@@ -590,6 +626,7 @@ def generate_data(data_folder,  config_folder, data_amount, verbose):
                     print(f"Error processing file: {e}")
 
     print(f"Finished generating {i} images")
+
 
 def prepare_data_for_training(data_folder, verbose=False):
 
@@ -716,10 +753,12 @@ class OurDigitizationModel(AbstractDigitizationModel):
         self.det_config = None#os.path.join(work_dir, "maskrcnn_res101.py")
         self.model = None
         self.unet = None
-        self.mmseg = None
+        # self.mmseg = None
         self.base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
         self.src_dir = 'TeamCode/src'
         self.config_dir = os.path.join(self.src_dir, 'configs_ckpts')
+        self.processed_data_dir = 'TeamCode'
+        self.device = dev
 
 
     @classmethod
@@ -727,49 +766,48 @@ class OurDigitizationModel(AbstractDigitizationModel):
          # Create an instance of the class
         instance = cls()
         
-        
-        if not os.path.exists(os.path.join(model_folder, "maskrcnn_res101.py")):
-            #copy the config file to the model folder
-            shutil.copy(os.path.join(instance.config_dir, 'maskrcnn_res101.py'), model_folder)
-        instance.det_config = os.path.join(model_folder, "maskrcnn_res101.py")
-        
+        # check if the model folder is empty:
+        if not os.listdir(model_folder) or not os.path.exists(os.path.join(model_folder, 'last_checkpoint')):
+            print(f"model folder {model_folder} is empty, initializing model with pre-trained weights")
+            instance.det_config = os.path.join(instance.config_dir, 'maskrcnn_res101.py')
+            instance.model = init_detector(instance.det_config, os.path.join(instance.config_dir, 'epoch_24.pth'), device=instance.device)
+            instance.unet = ECGPredictor('resunet10', os.path.join(instance.config_dir, 'segmentation/segmentation_model.pth'), size=208, cbam=False)
+
+            return instance
+
+
         # Construct checkpoint path based on the model_folder parameter
         
         maskrcnn_checkpoint_log = os.path.join(model_folder, 'last_checkpoint')
-        if not os.path.exists(maskrcnn_checkpoint_log):
-            print(f"last_checkpoint not found in {model_folder}")
-            maskrcnn_checkpoint_log = os.path.join(instance.config_dir, 'last_checkpoint')
-            
-        with open(maskrcnn_checkpoint_log, 'r') as f:
-            first_line = f.readline().strip()  # Read the first line and strip any whitespace/newline characters
-            model_name = os.path.basename(first_line)
-            # Check if the path exists based on the first line
-            if not os.path.exists(os.path.join(model_folder, first_line)):
-                maskrcnn_checkpoint_file = os.path.join(instance.config_dir, 'epoch_12.pth')
-                if not os.path.exists(os.path.join(model_folder, model_name)):
-                    shutil.copy(maskrcnn_checkpoint_file, model_folder)
-            else: 
-                maskrcnn_checkpoint_file = os.path.join(model_folder, first_line)
+        try:
+            with open(maskrcnn_checkpoint_log, 'r') as f:
+                first_line = f.readline().strip()
+                first_line = f.readline().strip()  # Read the first line and strip any whitespace/newline characters
+                model_name = os.path.basename(first_line)
                 
-        # print(f"this is the det_dir {instance.det_config}, this is the mrcnn ckpt {maskrcnn_checkpoint_file}")
+                if os.path.exists(first_line):
+                    maskrcnn_checkpoint_file = first_line
+                elif os.path.exists(os.path.join(model_folder, model_name)):
+                    maskrcnn_checkpoint_file = os.path.join(model_folder, model_name)
+                elif os.path.exists(os.path.join(instance.config_dir, model_name)):
+                    maskrcnn_checkpoint_file = os.path.join(instance.config_dir, model_name)
+                else:
+                    # Fall back to a default checkpoint
+                    maskrcnn_checkpoint_file = os.path.join(instance.config_dir, 'epoch_24.pth')
+        except Exception as e:
+            print(f"Error reading checkpoint file: {e}")
+            maskrcnn_checkpoint_file = os.path.join(instance.config_dir, 'epoch_24.pth')
 
-        # Initialize the model using instance-specific variables
-        # load model parameters from json file
-        if not os.path.exists(os.path.join(model_folder, 'ecg_params.json')):
-            shutil.copy(os.path.join(instance.config_dir, 'ecg_params.json'), model_folder)
-        with open(os.path.join(model_folder, 'ecg_params.json'), 'r') as f:
-            ecg_params = json.load(f)['segmentation']
-        
 
-        if not os.path.exists(os.path.join(model_folder, 'segmentation/segmentation_model.pth')):
-            os.makedirs(os.path.join(model_folder, 'segmentation'), exist_ok=True)
-            shutil.copy(os.path.join(instance.config_dir, 'segmentation/segmentation_model.pth'), os.path.join(model_folder, 'segmentation/segmentation_model.pth'))
-        # print(f"this is the det_dir {instance.det_config}, this is the mrcnn ckpt {maskrcnn_checkpoint_file}")
-        
         unet_checkpoint_file = os.path.join(model_folder, 'segmentation/segmentation_model.pth')
-        # print(f"this is the unet ckpt {unet_checkpoint_file}")
-        instance.model = init_detector(instance.det_config, maskrcnn_checkpoint_file, device=dev)
-        instance.unet = ECGPredictor('resunet10', unet_checkpoint_file, size=ecg_params['crop'], cbam=False)
+        if not os.path.exists(unet_checkpoint_file):
+            unet_checkpoint_file = os.path.join(instance.config_dir, 'segmentation/segmentation_model.pth') 
+
+        instance.det_config = os.path.join(instance.config_dir, 'maskrcnn_res101.py')
+        if not os.path.exists(instance.det_config):
+            instance.det_config = os.path.join(instance.config_dir, 'maskrcnn_res101.py')
+        instance.model = init_detector(instance.det_config, maskrcnn_checkpoint_file, device=instance.device)
+        instance.unet = ECGPredictor('resunet10', unet_checkpoint_file, size=208, cbam=False)
         # instance.mmseg = init_model(config='/scratch/hshang/moody/mmsegmentation_MINS/demo/deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive-ecg.py', checkpoint='/scratch/hshang/moody/mmsegmentation_MINS/demo/work_dirs/ECG/iter_400.pth', device=dev)
         if verbose:
             print(f"Model loaded from {maskrcnn_checkpoint_file}")
@@ -788,28 +826,20 @@ class OurDigitizationModel(AbstractDigitizationModel):
                 (220, 20, 60),
             ]
         }
-        cfg.data_root = os.path.join(data_folder, 'processed_data')
+        cfg.data_root = os.path.join(self.processed_data_dir, 'processed_data')
         cfg.train_dataloader.dataset.ann_file = 'annotation_coco.json'
         cfg.train_dataloader.dataset.data_root = cfg.data_root
         cfg.train_dataloader.dataset.data_prefix.img = ''
         cfg.train_dataloader.dataset.metainfo = cfg.metainfo
         cfg.model.backbone.init_cfg.checkpoint = os.path.join(self.config_dir, "original_pretrained_weights", "resnet101_msra-6cc46731.pth")
         
-
-        # cfg.val_dataloader.dataset.ann_file = 'val/annotation_coco.json'
-        # cfg.val_dataloader.dataset.data_root = cfg.data_root
-        # cfg.val_dataloader.dataset.data_prefix.img = 'val/'
-        # cfg.val_dataloader.dataset.metainfo = cfg.metainfo
         
         cfg.val_cfg = None
         cfg.val_dataloader = None
 
-        # cfg.test_dataloader = cfg.val_dataloader
 
         # Modify metric config
-        # cfg.val_evaluator.ann_file = cfg.data_root+'/'+'val/annotation_coco.json'
         cfg.val_evaluator = None
-        # cfg.test_evaluator = cfg.val_evaluator
         
         cfg.work_dir = os.path.join(model_folder, 'maskrcnn_res101.py')
         # assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
@@ -843,7 +873,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         
         param_file = os.path.join(self.config_dir, 'ecg_params.json')
         param_set = "segmentation"
-        unet_data_dir = os.path.join(data_folder, 'processed_data', 'cropped_img')
+        unet_data_dir = os.path.join(self.processed_data_dir, 'processed_data', 'cropped_img')
         ecg = ECGSegment(
             param_file=param_file,
             param_set=param_set
@@ -851,7 +881,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         ecg.run(
             data_dir=unet_data_dir,
             models_dir=model_folder,
-            cv=3,
+            cv=2,
             resume_training=True,
             checkpoint_path=os.path.join(self.config_dir, 'segmentation_base_model.pth')
         )
@@ -900,8 +930,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
     def train_model(self, data_folder, model_folder, verbose):
         
         # multiprocessing.set_start_method('spawn')
-        # generate_data(data_folder, self.config_dir, 5000, verbose)
-        prepare_data_for_training(data_folder, verbose)
+        generate_data(data_folder, self.config_dir, self.processed_data_dir, 5000, verbose)
+        prepare_data_for_training(self.processed_data_dir, verbose)
         
         if verbose:
             print('Training the digitization model...')
@@ -915,7 +945,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         # # self.train_detection_model(cfg, model_folder, verbose)
         
         self.train_detection_model(data_folder, model_folder, verbose)
-        # self.train_segmentation_model(data_folder, model_folder, verbose)
+        self.train_segmentation_model(data_folder, model_folder, verbose)
         # Start the training in separate threads
         # detection_thread = multiprocessing.Process(target=self.train_detection_model, args=(data_folder, model_folder, verbose))
         # segmentation_thread = multiprocessing.Process(target=self.train_segmentation_model, args=(data_folder, model_folder, verbose))
@@ -1011,55 +1041,6 @@ class OurDigitizationModel(AbstractDigitizationModel):
             "Error in unet: {e}"
             return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
         to_be_readout = np.where(to_be_readout > 0.5, True, False)
-        
-        
-
-        # load gt masks for debuging:
-        # Get directory and image name
-        # directory_path = os.path.dirname(img_path)
-        # img_name = os.path.splitext(os.path.basename(img_path))[0]
-
-        # # Correctly assign paths
-        # bbox_path = os.path.join(directory_path, img_name + '.json')
-        # mask_path = os.path.join(directory_path, img_name + '_mask.png')
-
-        # # Load bounding box coordinates from JSON
-        # with open(bbox_path, 'r') as file:
-        #     settings = json.load(file)
-
-        # gt_bboxes = []
-        # for lead in settings['leads']:
-        #     coords = lead['lead_bounding_box']
-        #     x_coords = [coord[1] for coord in coords.values()]
-        #     y_coords = [coord[0] for coord in coords.values()]
-        #     x_min, x_max = min(x_coords), max(x_coords)
-        #     y_min, y_max = min(y_coords), max(y_coords)
-        #     gt_bboxes.append([x_min, y_min, x_max, y_max])
-
-        # # Convert gt_bboxes to a numpy array
-        # gt_bboxes = np.array(gt_bboxes)
-
-        # # Load the mask
-        # gt_mask_load = mmcv.imread(mask_path, flag='grayscale')
-        # gt_masks = []
-
-        # # Generate masks for each bounding box
-        # for gt_bbox in gt_bboxes:
-        #     x1, y1, x2, y2 = map(int, gt_bbox)  # Ensure coordinates are integers
-        #     gt_mask = np.zeros_like(gt_mask_load)
-        #     gt_mask[y1:y2, x1:x2] = gt_mask_load[y1:y2, x1:x2]
-        #     gt_masks.append(gt_mask)
-
-        # # Convert gt_masks to a numpy array
-        # gt_masks = np.array(gt_masks)
-        # gt_masks = np.where(gt_masks > 0.1, True, False)
-                
-        
-            
-        
-        # assert gt_masks.shape == to_be_readout.shape, f"Expected shape {to_be_readout.shape}, got {gt_masks.shape}"
-        # signal=readOut(header_path, masks, bboxes, mV_pixel)
-        
         
         
         freq = hc.get_sampling_frequency(input_header)

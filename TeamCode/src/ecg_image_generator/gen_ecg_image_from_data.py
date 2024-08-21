@@ -1,7 +1,7 @@
 import os, sys, argparse, json
 import random
 import csv
-import qrcode
+
 from PIL import Image
 import numpy as np
 from scipy.stats import bernoulli
@@ -249,25 +249,26 @@ def run_single_file(args):
 
 
             if args.add_qr_code:
-                img = np.array(Image.open(out))
-                qr = qrcode.QRCode(
-                    version=1,
-                    error_correction=qrcode.constants.ERROR_CORRECT_L,
-                    box_size=5,
-                    border=4,
-                )
-                qr.add_data(args.encoding)
-                qr.make(fit=True)
+                pass
+                # img = np.array(Image.open(out))
+                # qr = qrcode.QRCode(
+                #     version=1,
+                #     error_correction=qrcode.constants.ERROR_CORRECT_L,
+                #     box_size=5,
+                #     border=4,
+                # )
+                # qr.add_data(args.encoding)
+                # qr.make(fit=True)
 
-                qr_img = np.array(qr.make_image(fill_color="black", back_color="white"))
-                qr_img_color = np.zeros((qr_img.shape[0], qr_img.shape[1], 3))
-                qr_img_color[:,:,0] = qr_img*255.
-                qr_img_color[:,:,1] = qr_img*255.
-                qr_img_color[:,:,2] = qr_img*255.
+                # qr_img = np.array(qr.make_image(fill_color="black", back_color="white"))
+                # qr_img_color = np.zeros((qr_img.shape[0], qr_img.shape[1], 3))
+                # qr_img_color[:,:,0] = qr_img*255.
+                # qr_img_color[:,:,1] = qr_img*255.
+                # qr_img_color[:,:,2] = qr_img*255.
                 
-                img[:qr_img.shape[0], -qr_img.shape[1]:, :3] = qr_img_color
-                img = Image.fromarray(img)
-                img.save(out)
+                # img[:qr_img.shape[0], -qr_img.shape[1]:, :3] = qr_img_color
+                # img = Image.fromarray(img)
+                # img.save(out)
             
             
             

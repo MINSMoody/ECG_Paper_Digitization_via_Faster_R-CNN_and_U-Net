@@ -3,7 +3,7 @@ backend_args = None
 data_root = '/scratch/hshang/moody/final_training_set/mrcnn_data'
 dataset_type = 'CocoDataset'
 default_hooks = dict(
-    checkpoint=dict(interval=3, type='CheckpointHook'),
+    checkpoint=dict(interval=10, type='CheckpointHook'),
     logger=dict(interval=100, type='LoggerHook'),
     param_scheduler=dict(type='ParamSchedulerHook'),
     sampler_seed=dict(type='DistSamplerSeedHook'),
@@ -287,7 +287,7 @@ test_pipeline = [
         ),
         type='PackDetInputs'),
 ]
-train_cfg = dict(max_epochs=24, type='EpochBasedTrainLoop', val_interval=3)
+train_cfg = dict(max_epochs=30, type='EpochBasedTrainLoop', val_interval=3)
 train_dataloader = dict(
     batch_sampler=dict(type='AspectRatioBatchSampler'),
     batch_size=1,
