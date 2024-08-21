@@ -2,10 +2,8 @@ pandas
 pillow
 wfdb
 scikit-learn
-pycocotools
 imutils
 imgaug==0.4.0
-qrcode
 imageio
 matplotlib
 PyWavelets 
