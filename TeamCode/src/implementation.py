@@ -6,15 +6,15 @@ from TeamCode.src.verify_environment import verify_environment
 import helper_code as hc
 import numpy as np
 import os
-import cv2
 import pickle
+from PIL import Image
 
 # from mmseg.registry import DATASETS
 
-# from mmengine import Registry
-# from mmseg.datasets import BaseSegDataset
-# from mmseg.apis import init_model, inference_model
-# from mmseg.apis import show_result_pyplot
+from mmengine import Registry
+from mmseg.datasets import BaseSegDataset
+from mmseg.apis import init_model, inference_model
+from mmseg.apis import show_result_pyplot
 
 
 
@@ -25,14 +25,15 @@ from concurrent.futures import ThreadPoolExecutor
 import torch
 import warnings
 
-from TeamCode.src.ecg_predict import ECGPredictor
-from TeamCode.src.ecg_main import ECGSegment
+# from TeamCode.src.ecg_predict import ECGPredictor
+# from TeamCode.src.ecg_main import ECGSegment
 
 from mmengine.config import Config, DictAction
 from mmengine.registry import RUNNERS
 from mmengine.runner import Runner
 from mmdet.utils import setup_cache_size_limit_of_dynamo
 import mmcv
+
 from mmdet.apis import init_detector, inference_detector
 from helper_code import get_num_samples, get_signal_names, get_image_files
 
@@ -476,7 +477,7 @@ def readOut(num_samples, masks, nrows, bboxes, mV_pixel, sampling_frequency): # 
             return np.zeros(signallen)
         signal = crop_from_bbox(bboxes[index], masks[index], mV_pixel)
         # check the number of nan in signal
-        if np.isnan(signal).sum() > 0.5*len(signal):
+        if np.isnan(signal).sum() > 0.5*signallen:
             print(f'Warning: More than 50% of signal is nan, returning zeros')
             return np.zeros(signallen)
         signal = interpolate_nan(signal) - np.mean(signal)
@@ -545,13 +546,13 @@ def process_single_file(full_header_file, full_recording_file, args, original_ou
 
     return run_single_file(args)
 
-def generate_data(data_folder,  config_folder, data_amount, verbose):
+def generate_data(data_folder,  config_folder, output_folder,  data_amount,  verbose):
     with open(os.path.join(config_folder, 'data_format.json'), 'r') as f:
         args_dict = json.load(f)
     args = Namespace(**args_dict)
     random.seed(args.seed)
     args.input_directory = data_folder
-    args.output_directory = os.path.join(data_folder, 'processed_data')
+    args.output_directory = os.path.join(output_folder, 'processed_data')
     args.max_num_images = data_amount
     if not os.path.isabs(args.input_directory):
         args.input_directory = os.path.normpath(os.path.join(os.getcwd(), args.input_directory))
@@ -592,7 +593,7 @@ def generate_data(data_folder,  config_folder, data_amount, verbose):
     print(f"Finished generating {i} images")
 
 def prepare_data_for_training(data_folder, verbose=False):
-
+    # data_folder is the processed_data folder
     def binary_mask_to_rle_np(binary_mask):
         # Create a copy of the original mask
         thickened_mask = np.copy(binary_mask)
@@ -625,10 +626,10 @@ def prepare_data_for_training(data_folder, verbose=False):
         obj_count = 0
         img_crop_dir = osp.join(data_path, 'cropped_img')
         os.makedirs(img_crop_dir, exist_ok=True)
-        mask_crop_dir = osp.join(data_path, 'cropped_masks')
+        mask_crop_dir = osp.join(data_path,'cropped_masks')
         os.makedirs(mask_crop_dir, exist_ok=True)
         
-        for entry in tqdm(os.listdir(data_path), desc='Processing file'):
+        for entry in tqdm(os.listdir(data_path,), desc='Processing file'):
             if entry.endswith(".png"):
                 img_name = entry[:-4]
                 bbox_path = osp.join(bbox_dir, f'{img_name}.json')
@@ -668,6 +669,12 @@ def prepare_data_for_training(data_folder, verbose=False):
                     save_crop = np.random.choice([True, False], p=[0.2, 0.8])
                     
                     if save_crop:
+                        palette = [[0,0,0], [255,255,255]]
+                        lead_mask = np.where(lead_mask < 50, 0, 1).astype(np.uint8)
+                        lead_mask = Image.fromarray(lead_mask).convert('P')
+                        lead_mask.putpalette(np.array(palette, dtype=np.uint8))
+                        lead_mask = np.array(lead_mask)
+                        # print(f"Saving crop for {img_name} to {img_crop_dir}")
                         imwrite(lead_crop, osp.join(img_crop_dir, f'{obj_count}.png'))
                         imwrite(lead_mask, osp.join(mask_crop_dir, f'{obj_count}.png'))
                     
@@ -705,21 +712,23 @@ def prepare_data_for_training(data_folder, verbose=False):
         mmengine.dump(coco_format_json, out_file)
     convert_ecg_to_coco(
     os.path.join(data_folder, 'processed_data'),
-    os.path.join(data_folder, 'processed_data'),
-    os.path.join(data_folder, 'processed_data','masks'),
+    os.path.join(data_folder, 'processed_data' ),
+    os.path.join(data_folder, 'processed_data', 'masks'),
     os.path.join(data_folder, 'processed_data', 'annotation_coco.json'))
 
 
 class OurDigitizationModel(AbstractDigitizationModel):
     def __init__(self):
         verify_environment()
-        self.det_config = None#os.path.join(work_dir, "maskrcnn_res101.py")
-        self.model = None
-        self.unet = None
-        self.mmseg = None
-        self.base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
+        self.det_config = None
+        self.det_model = None
+        # self.unet = None
+        self.seg_config = None
+        self.seg_model = None
+        # self.base_dir = os.path.dirname(os.path.abspath(__file__))  # Path to the directory containing your_script.py
         self.src_dir = 'TeamCode/src'
         self.config_dir = os.path.join(self.src_dir, 'configs_ckpts')
+        self.processed_data_dir = self.src_dir
 
 
     @classmethod
@@ -727,60 +736,89 @@ class OurDigitizationModel(AbstractDigitizationModel):
          # Create an instance of the class
         instance = cls()
         
-        
-        if not os.path.exists(os.path.join(model_folder, "maskrcnn_res101.py")):
+        if not os.path.exists(os.path.join(model_folder, "maskrcnn")):
+            os.makedirs(os.path.join(model_folder, "maskrcnn"))
+
+        if not os.path.exists(os.path.join(model_folder, "maskrcnn/maskrcnn_res101.py")):
             #copy the config file to the model folder
-            shutil.copy(os.path.join(instance.config_dir, 'maskrcnn_res101.py'), model_folder)
-        instance.det_config = os.path.join(model_folder, "maskrcnn_res101.py")
+            shutil.copy(os.path.join(instance.config_dir, 'maskrcnn', 'maskrcnn_res101.py'), os.path.join(model_folder, 'maskrcnn','maskrcnn_res101.py'))
+        instance.det_config = os.path.join(model_folder, "maskrcnn/maskrcnn_res101.py")
         
         # Construct checkpoint path based on the model_folder parameter
         
-        maskrcnn_checkpoint_log = os.path.join(model_folder, 'last_checkpoint')
+        maskrcnn_checkpoint_log = os.path.join(model_folder, 'maskrcnn/last_checkpoint')
         if not os.path.exists(maskrcnn_checkpoint_log):
             print(f"last_checkpoint not found in {model_folder}")
-            maskrcnn_checkpoint_log = os.path.join(instance.config_dir, 'last_checkpoint')
+            maskrcnn_checkpoint_log = os.path.join(instance.config_dir, 'maskrcnn/last_checkpoint')
             
         with open(maskrcnn_checkpoint_log, 'r') as f:
             first_line = f.readline().strip()  # Read the first line and strip any whitespace/newline characters
             model_name = os.path.basename(first_line)
             # Check if the path exists based on the first line
             if not os.path.exists(os.path.join(model_folder, first_line)):
-                maskrcnn_checkpoint_file = os.path.join(instance.config_dir, 'epoch_12.pth')
+                maskrcnn_checkpoint_file = os.path.join(instance.config_dir, 'maskrcnn/epoch_12.pth')
                 if not os.path.exists(os.path.join(model_folder, model_name)):
                     shutil.copy(maskrcnn_checkpoint_file, model_folder)
             else: 
                 maskrcnn_checkpoint_file = os.path.join(model_folder, first_line)
+
+        if not os.path.exists(os.path.join(model_folder, "unet")):
+            os.makedirs(os.path.join(model_folder, "unet"))
+        if not os.path.exists(os.path.join(model_folder, "unet/unet.py")):
+            #copy the config file to the model folder
+            shutil.copy(os.path.join(instance.config_dir, 'unet/unet.py'), os.path.join(model_folder, 'unet/unet.py'))
+        instance.seg_config = os.path.join(model_folder, "unet/unet.py")
+        
+        # Construct checkpoint path based on the model_folder parameter
+        
+        unet_checkpoint_log = os.path.join(model_folder, 'unet/last_checkpoint')
+        if not os.path.exists(unet_checkpoint_log):
+            print(f"last_checkpoint not found in {model_folder}")
+            unet_checkpoint_log = os.path.join(instance.config_dir, 'unet/last_checkpoint')
+            
+        with open(unet_checkpoint_log, 'r') as f:
+            first_line = f.readline().strip()  # Read the first line and strip any whitespace/newline characters
+            unet_model_name = os.path.basename(first_line)
+            # Check if the path exists based on the first line
+            if not os.path.exists(os.path.join(model_folder, first_line)):
+                unet_checkpoint_file = os.path.join(instance.config_dir, 'unet/iter_400.pth')
+                if not os.path.exists(os.path.join(model_folder, unet_model_name)):
+                    shutil.copy(unet_checkpoint_file, model_folder)
+            else: 
+                unet_checkpoint_file = os.path.join(model_folder, first_line)
+        
+
                 
         # print(f"this is the det_dir {instance.det_config}, this is the mrcnn ckpt {maskrcnn_checkpoint_file}")
 
         # Initialize the model using instance-specific variables
         # load model parameters from json file
-        if not os.path.exists(os.path.join(model_folder, 'ecg_params.json')):
-            shutil.copy(os.path.join(instance.config_dir, 'ecg_params.json'), model_folder)
-        with open(os.path.join(model_folder, 'ecg_params.json'), 'r') as f:
-            ecg_params = json.load(f)['segmentation']
+        # if not os.path.exists(os.path.join(model_folder, 'ecg_params.json')):
+        #     shutil.copy(os.path.join(instance.config_dir, 'ecg_params.json'), model_folder)
+        # with open(os.path.join(model_folder, 'ecg_params.json'), 'r') as f:
+        #     ecg_params = json.load(f)['segmentation']
         
 
-        if not os.path.exists(os.path.join(model_folder, 'segmentation/segmentation_model.pth')):
-            os.makedirs(os.path.join(model_folder, 'segmentation'), exist_ok=True)
-            shutil.copy(os.path.join(instance.config_dir, 'segmentation/segmentation_model.pth'), os.path.join(model_folder, 'segmentation/segmentation_model.pth'))
-        # print(f"this is the det_dir {instance.det_config}, this is the mrcnn ckpt {maskrcnn_checkpoint_file}")
+        # if not os.path.exists(os.path.join(model_folder, 'segmentation/segmentation_model.pth')):
+        #     os.makedirs(os.path.join(model_folder, 'segmentation'), exist_ok=True)
+        #     shutil.copy(os.path.join(instance.config_dir, 'segmentation/segmentation_model.pth'), os.path.join(model_folder, 'segmentation/segmentation_model.pth'))
+        # # print(f"this is the det_dir {instance.det_config}, this is the mrcnn ckpt {maskrcnn_checkpoint_file}")
         
-        unet_checkpoint_file = os.path.join(model_folder, 'segmentation/segmentation_model.pth')
+        # unet_checkpoint_file = os.path.join(model_folder, 'segmentation/segmentation_model.pth')
         # print(f"this is the unet ckpt {unet_checkpoint_file}")
-        instance.model = init_detector(instance.det_config, maskrcnn_checkpoint_file, device=dev)
-        instance.unet = ECGPredictor('resunet10', unet_checkpoint_file, size=ecg_params['crop'], cbam=False)
-        # instance.mmseg = init_model(config='/scratch/hshang/moody/mmsegmentation_MINS/demo/deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive-ecg.py', checkpoint='/scratch/hshang/moody/mmsegmentation_MINS/demo/work_dirs/ECG/iter_400.pth', device=dev)
+        instance.det_model = init_detector(instance.det_config, maskrcnn_checkpoint_file, device=dev)
+        # instance.unet = ECGPredictor('resunet10', unet_checkpoint_file, size=ecg_params['crop'], cbam=False)
+        instance.seg_model = init_model(config=instance.seg_config, checkpoint=unet_checkpoint_file, device=dev)
         if verbose:
-            print(f"Model loaded from {maskrcnn_checkpoint_file}")
+            print(f"Model loaded from {maskrcnn_checkpoint_file}, {unet_checkpoint_file}")
 
         return instance
 
-    def train_detection_model(self, data_folder, model_folder, verbose):
+    def train_detection_model(self, model_folder, verbose):
         # load config
        
         # work_dir = os.path.join(base_dir, 'work_dir')
-        config_file_path = os.path.join(self.config_dir, 'maskrcnn_res101.py')
+        config_file_path = os.path.join(self.config_dir, 'maskrcnn', 'maskrcnn_res101.py')
         cfg = Config.fromfile(config_file_path)
         cfg.metainfo = {
             'classes': ('ecg_lead', ),
@@ -788,7 +826,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
                 (220, 20, 60),
             ]
         }
-        cfg.data_root = os.path.join(data_folder, 'processed_data')
+        cfg.data_root = os.path.join(self.processed_data_dir, 'processed_data')
         cfg.train_dataloader.dataset.ann_file = 'annotation_coco.json'
         cfg.train_dataloader.dataset.data_root = cfg.data_root
         cfg.train_dataloader.dataset.data_prefix.img = ''
@@ -811,7 +849,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         cfg.val_evaluator = None
         # cfg.test_evaluator = cfg.val_evaluator
         
-        cfg.work_dir = os.path.join(model_folder, 'maskrcnn_res101.py')
+        cfg.work_dir = os.path.join(model_folder, 'maskrcnn')
         # assert os.path.exists(os.path.join(base_dir,'checkpoints')), f'ckpt_root is not found'
         cfg.load_from = os.path.join(self.config_dir,"original_pretrained_weights", 'mask_rcnn_r101_caffe_fpn_1x_coco_20200601_095758-805e06c1.pth')
 
@@ -821,7 +859,6 @@ class OurDigitizationModel(AbstractDigitizationModel):
         if verbose:
             print("Training detection model...")
         
-        cfg.work_dir = model_folder
         # build the runner from config
         if 'runner_type' not in cfg:
             # build the default runner
@@ -837,71 +874,133 @@ class OurDigitizationModel(AbstractDigitizationModel):
         if verbose:
             print("Detection model training completed.")
 
-    def train_segmentation_model(self, data_folder, model_folder, verbose):
-        if verbose:
-            print("Training segmentation model...")
+    # def train_segmentation_model(self, data_folder, model_folder, verbose):
+    #     if verbose:
+    #         print("Training segmentation model...")
         
-        param_file = os.path.join(self.config_dir, 'ecg_params.json')
-        param_set = "segmentation"
-        unet_data_dir = os.path.join(data_folder, 'processed_data', 'cropped_img')
-        ecg = ECGSegment(
-            param_file=param_file,
-            param_set=param_set
-        )
-        ecg.run(
-            data_dir=unet_data_dir,
-            models_dir=model_folder,
-            cv=3,
-            resume_training=True,
-            checkpoint_path=os.path.join(self.config_dir, 'segmentation_base_model.pth')
-        )
+    #     param_file = os.path.join(self.config_dir, 'ecg_params.json')
+    #     param_set = "segmentation"
+    #     unet_data_dir = os.path.join(data_folder, 'processed_data', 'cropped_img')
+    #     ecg = ECGSegment(
+    #         param_file=param_file,
+    #         param_set=param_set
+    #     )
+    #     ecg.run(
+    #         data_dir=unet_data_dir,
+    #         models_dir=model_folder,
+    #         cv=3,
+    #         resume_training=True,
+    #         checkpoint_path=os.path.join(self.config_dir, 'segmentation_base_model.pth')
+    #     )
         
-        if verbose:
-            print("Segmentation model training completed.")
+    #     if verbose:
+    #         print("Segmentation model training completed.")
     
-    # def train_mmseg_model(self, data_folder, model_folder, verbose):
-    #     classes = ('bg', 'signal')
-    #     palette = [[255,255,255], [0,0,0]]
-
-
-    #     @DATASETS.register_module()
-    #     class ECGDataset(BaseSegDataset):
-    #         METAINFO = dict(classes = classes, palette = palette)
-    #         def __init__(self, **kwargs):
-    #             super().__init__(img_suffix='.png', seg_map_suffix='.png', **kwargs)
-        
+    def train_segmentation_model(self, model_folder, verbose):
     #     # split train/val set randomly
-    #     import os.path as osp
-    #     data_root = '/scratch/hshang/moody/train_set_hr'
-    #     split_dir = 'splits'
-    #     img_dir = 'cropped_img'
-    #     ann_dir = 'cropped_masks'
-    #     mmengine.mkdir_or_exist(osp.join(data_root, split_dir))
-    #     filename_list = [osp.splitext(filename)[0] for filename in mmengine.scandir(
-    #         osp.join(data_root, ann_dir), suffix='.png')]
-    #     with open(osp.join(data_root, split_dir, 'train.txt'), 'w') as f:
-    #     # select first 4/5 as train set
-    #         train_length = int(len(filename_list)*4/5)
-    #         f.writelines(line + '\n' for line in filename_list[:train_length])
-    #     with open(osp.join(data_root, split_dir, 'val.txt'), 'w') as f:
-    #     # select last 1/5 as train set
-    #         f.writelines(line + '\n' for line in filename_list[train_length:])
-    #     # from mmengine import Config
-    #     cfg = Config.fromfile('/scratch/hshang/moody/mmsegmentation_MINS/demo/deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive-ecg.py')
 
-    #     cfg.data_root = data_folder
+        data_root = os.path.join(self.processed_data_dir, 'processed_data')
+        split_dir = 'splits'
+        img_dir = 'cropped_img'
+        ann_dir = 'cropped_masks'
+        
+        from PIL import Image
+        # convert dataset annotation to semantic segmentation map
+       
 
-    #     # from mmengine.runner import Runner
+        mmengine.mkdir_or_exist(osp.join(data_root, split_dir))
+        filename_list = [osp.splitext(filename)[0] for filename in mmengine.scandir(
+            osp.join(data_root, ann_dir), suffix='.png')]
+        with open(osp.join(data_root, split_dir, 'train.txt'), 'w') as f:
+        # select first 4/5 as train set
+            train_length = int(len(filename_list)*4/5)
+            f.writelines(line + '\n' for line in filename_list[:train_length])
+        with open(osp.join(data_root, split_dir, 'val.txt'), 'w') as f:
+        # select last 1/5 as train set
+            f.writelines(line + '\n' for line in filename_list[train_length:])
 
-    #     runner = Runner.from_cfg(cfg)
+        cfg = Config.fromfile('/scratch/hshang/moody/final_phase_submission/official-phase-mins-eth/TeamCode/src/configs_ckpts/unet/unet.py')
 
-    #     runner.train()
+        crop_size = (256, 256)
+
+        cfg.train_pipeline = [
+            dict(type='LoadImageFromFile'),
+            dict(type='LoadAnnotations'),
+            dict(
+                keep_ratio=True,
+                ratio_range=(0.5, 1.5),  # Adjusted to prevent aggressive downscaling
+                scale=(256, 256),  # Increased scale size
+                type='RandomResize'),
+            dict(cat_max_ratio=0.75, crop_size=crop_size, type='RandomCrop'),
+            dict(type='ResizeToMultiple', size_divisor=16),
+            dict(prob=0.5, type='RandomFlip'),
+            dict(type='PackSegInputs'),
+        ]
+
+        # cfg.val_pipeline = [
+        #     dict(type='LoadImageFromFile'),
+        #     dict(keep_ratio=True, scale=(512, 512), type='Resize'),  # Match with training scale
+        #     dict(type='ResizeToMultiple', size_divisor=16),
+        #     dict(type='LoadAnnotations'),
+        #     dict(type='PackSegInputs'),
+        # ]
+
+        # # Since we use only one GPU, BN is used instead of SyncBN
+        # cfg.norm_cfg = dict(type='BN', requires_grad=True)
+        # cfg.crop_size = (256, 256)
+        # cfg.model.data_preprocessor.size = cfg.crop_size
+        # cfg.model.backbone.norm_cfg = cfg.norm_cfg
+        # cfg.model.decode_head.norm_cfg = cfg.norm_cfg
+        # cfg.model.auxiliary_head.norm_cfg = cfg.norm_cfg
+
+
+
+
+        # Modify dataset type and path
+        cfg.dataset_type = 'HRFDataset'
+        cfg.data_root = data_root
+
+        cfg.data_root = data_root
+        cfg.load_from = os.path.join(self.config_dir, "original_pretrained_weights", 'deeplabv3_unet_s5-d16_ce-1.0-dice-3.0_64x64_40k_drive_20211210_201825-6bf0efd7.pth')
+        cfg.work_dir = model_folder
+        cfg.model.decode_head.num_classes = 2
+        cfg.model.auxiliary_head.num_classes = 2
+
+
+        cfg.train_dataloader.dataset.data_root = cfg.data_root
+        cfg.train_dataloader.dataset.data_prefix = dict(img_path='cropped_img', seg_map_path='cropped_masks')
+        cfg.train_dataloader.dataset.pipeline = cfg.train_pipeline
+        cfg.train_dataloader.dataset.ann_file = 'splits/train.txt'
+
+        cfg.val_dataloader.dataset.type = cfg.dataset_type
+        cfg.val_dataloader.dataset.data_root = cfg.data_root
+        cfg.val_dataloader.dataset.data_prefix = dict(img_path='cropped_img', seg_map_path='cropped_masks')
+        cfg.val_dataloader.dataset.pipeline = cfg.test_pipeline
+        cfg.val_dataloader.dataset.ann_file = 'splits/val.txt'
+
+        cfg.test_dataloader = cfg.val_dataloader
+
+        cfg.train_dataloader.batch_size = 8  # Try reducing the batch size
+
+        cfg.train_cfg.max_iters = 200
+        cfg.train_cfg.val_interval = 200
+        cfg.default_hooks.logger.interval = 10
+        cfg.default_hooks.checkpoint.interval = 200
+
+        # cfg.dataset_type = 'ECGDataset'
+        # Set seed to facilitate reproducing the result
+        cfg['randomness'] = dict(seed=0)
+
+
+        runner = Runner.from_cfg(cfg)
+
+        runner.train()
 
     def train_model(self, data_folder, model_folder, verbose):
         
         # multiprocessing.set_start_method('spawn')
-        # generate_data(data_folder, self.config_dir, 5000, verbose)
-        prepare_data_for_training(data_folder, verbose)
+        generate_data(data_folder, self.config_dir, self.processed_data_dir, 5000, verbose)
+        prepare_data_for_training(self.processed_data_dir, verbose)
         
         if verbose:
             print('Training the digitization model...')
@@ -913,8 +1012,11 @@ class OurDigitizationModel(AbstractDigitizationModel):
         
         # self.train_segmentation_model(data_folder, model_folder, verbose)
         # # self.train_detection_model(cfg, model_folder, verbose)
+        self.train_segmentation_model(model_folder, verbose)
+        self.train_detection_model(model_folder, verbose)
+
         
-        self.train_detection_model(data_folder, model_folder, verbose)
+
         # self.train_segmentation_model(data_folder, model_folder, verbose)
         # Start the training in separate threads
         # detection_thread = multiprocessing.Process(target=self.train_detection_model, args=(data_folder, model_folder, verbose))
@@ -965,8 +1067,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
         empty_signals_np[9:12,3*lead_length:4*lead_length] = 0
         
         
-
-        result = inference_detector(self.model, img)
+        with Registry('scope').switch_scope_and_registry('mmdet'):
+            result = inference_detector(self.det_model, img)
         result_dict = result.to_dict()
         pred = result_dict['pred_instances']
         bboxes = pred['bboxes'].to(torch.int).cpu().detach().numpy()
@@ -994,23 +1096,39 @@ class OurDigitizationModel(AbstractDigitizationModel):
             return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
         
         # mmseg stuff
-        # to_be_readout = np.zeros((image.shape[0], image.shape[1], len(bboxes)))
-        # print(to_be_readout.shape)
-        # for i, (x1, y1, x2, y2) in enumerate(bboxes):
-        #     lead = img[y1:y2, x1:x2, :]
+        to_be_readout = []
+        img_to_dump = []
 
-        #     result = inference_model(self.mmseg, lead)
+        for i, (x1, y1, x2, y2) in enumerate(sorted_bboxes):
+            if np.isnan([x1, y1, x2, y2]).any():
+                print(f'Warning: Bounding box at index {i} is NaN, skipping')
+                continue
             
-        #     vis_result = show_result_pyplot(self.mmseg, lead, result)
+            x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
+            lead = img[y1:y2, x1:x2]
+            
+            result = inference_model(self.seg_model, lead)
+            pred_res = result.pred_sem_seg.data.cpu().detach().numpy().squeeze(0)
+            
+            assert pred_res.shape == lead.shape[:2]
+            
+            mask = np.zeros_like(img[:, :, 0], dtype=float)  # Assuming img is 3D (height, width, channels)
+            mask[y1:y2, x1:x2] = pred_res
+            
+            to_be_readout.append(mask)
+            img_to_dump.append(pred_res)
 
-        #     print(vis_result.shape)
-        #     to_be_readout[y1:y2, x1:x2, :] = mmcv.bgr2rgb(vis_result)
-        try:
-            to_be_readout = self.unet.run(image, sorted_bboxes.astype(int)) # float
-        except Exception as e:
-            "Error in unet: {e}"
-            return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
-        to_be_readout = np.where(to_be_readout > 0.5, True, False)
+        with open ('/scratch/hshang/moody/final_phase_submission/official-phase-mins-eth/images.pkl', 'wb') as f:
+            pickle.dump(img_to_dump, f)
+
+
+        # try:
+        #     to_be_readout = self.unet.run(image, sorted_bboxes.astype(int)) # float
+        # except Exception as e:
+        #     "Error in unet: {e}"
+        #     return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
+        # to_be_readout = [np.where(arr > 0.5, True, False) for arr in to_be_readout]
+
         
         
 
