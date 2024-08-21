@@ -1,7 +1,7 @@
 import os, sys, argparse, json
 import random
 import csv
-import qrcode
+
 from PIL import Image
 import numpy as np
 from scipy.stats import bernoulli
@@ -98,31 +98,6 @@ def writeCSV(args):
             if args.start_index != -1:
                 writer.writerow(["filename","xgrid","ygrid","lead_name","start","end"])
                 
-# def 
-
-# def remove_image_gradients(image_array, filename):
-#    # Step 2: Split the image into R, G, B channels
-#     if image_array.shape[2] == 4:
-#         b_channel, g_channel, r_channel, a_channel = cv2.split(image_array)
-#     elif image_array.shape[2] == 3:
-#         b_channel, g_channel, r_channel = cv2.split(image_array)
-#         a_channel = np.ones_like(b_channel) * 255
-#     else: return image_array
-
-#     # Step 3: Apply Laplacian filter to each channel
-#     laplacian_b = cv2.Laplacian(b_channel, cv2.CV_64F)
-#     laplacian_g = cv2.Laplacian(g_channel, cv2.CV_64F)
-#     laplacian_r = cv2.Laplacian(r_channel, cv2.CV_64F)
-
-#     # Convert the result back to uint8 (8-bit image) because Laplacian can result in negative values
-#     laplacian_b = cv2.convertScaleAbs(laplacian_b)
-#     laplacian_g = cv2.convertScaleAbs(laplacian_g)
-#     laplacian_r = cv2.convertScaleAbs(laplacian_r)
-
-#     # Step 4: Merge the channels back together
-#     laplacian_rgb = cv2.merge((laplacian_b, laplacian_g, laplacian_r, a_channel))
-#     cv2.imwrite(filename, laplacian_rgb)
-#     return filename
 
 def run_single_file(args):
         if hasattr(args, 'st') == True:
@@ -258,8 +233,7 @@ def run_single_file(args):
                 temp = 0
                 rotate = 0
                 noise = 0
-            # graident removal
-            # out = remove_image_gradients(np.array(Image.open(out)), out)
+
             if args.store_config == 2:
                 json_dict['augment'] = bool(augment)
                 json_dict['crop'] = crop
@@ -275,25 +249,26 @@ def run_single_file(args):
 
 
             if args.add_qr_code:
-                img = np.array(Image.open(out))
-                qr = qrcode.QRCode(
-                    version=1,
-                    error_correction=qrcode.constants.ERROR_CORRECT_L,
-                    box_size=5,
-                    border=4,
-                )
-                qr.add_data(args.encoding)
-                qr.make(fit=True)
+                pass
+                # img = np.array(Image.open(out))
+                # qr = qrcode.QRCode(
+                #     version=1,
+                #     error_correction=qrcode.constants.ERROR_CORRECT_L,
+                #     box_size=5,
+                #     border=4,
+                # )
+                # qr.add_data(args.encoding)
+                # qr.make(fit=True)
 
-                qr_img = np.array(qr.make_image(fill_color="black", back_color="white"))
-                qr_img_color = np.zeros((qr_img.shape[0], qr_img.shape[1], 3))
-                qr_img_color[:,:,0] = qr_img*255.
-                qr_img_color[:,:,1] = qr_img*255.
-                qr_img_color[:,:,2] = qr_img*255.
+                # qr_img = np.array(qr.make_image(fill_color="black", back_color="white"))
+                # qr_img_color = np.zeros((qr_img.shape[0], qr_img.shape[1], 3))
+                # qr_img_color[:,:,0] = qr_img*255.
+                # qr_img_color[:,:,1] = qr_img*255.
+                # qr_img_color[:,:,2] = qr_img*255.
                 
-                img[:qr_img.shape[0], -qr_img.shape[1]:, :3] = qr_img_color
-                img = Image.fromarray(img)
-                img.save(out)
+                # img[:qr_img.shape[0], -qr_img.shape[1]:, :3] = qr_img_color
+                # img = Image.fromarray(img)
+                # img.save(out)
             
             
             
