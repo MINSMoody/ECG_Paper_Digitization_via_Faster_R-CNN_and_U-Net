@@ -830,7 +830,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
                 (220, 20, 60),
             ]
         }
-        cfg.data_root = os.path.join(self.processed_data_dir, 'processed_data')
+        cfg.data_root = os.path.join(model_folder, 'processed_data')
         cfg.train_dataloader.dataset.ann_file = 'annotation_coco.json'
         cfg.train_dataloader.dataset.data_root = cfg.data_root
         cfg.train_dataloader.dataset.data_prefix.img = ''
@@ -877,7 +877,7 @@ class OurDigitizationModel(AbstractDigitizationModel):
         
         param_file = os.path.join(self.config_dir, 'ecg_params.json')
         param_set = "segmentation"
-        unet_data_dir = os.path.join(self.processed_data_dir, 'processed_data', 'cropped_img')
+        unet_data_dir = os.path.join(model_folder, 'processed_data', 'cropped_img')
         ecg = ECGSegment(
             param_file=param_file,
             param_set=param_set
@@ -934,8 +934,8 @@ class OurDigitizationModel(AbstractDigitizationModel):
     def train_model(self, data_folder, model_folder, verbose):
         
         # multiprocessing.set_start_method('spawn')
-        generate_data(data_folder, self.config_dir, self.processed_data_dir, 5000, verbose)
-        prepare_data_for_training(self.processed_data_dir, verbose)
+        generate_data(data_folder, self.config_dir, model_folder, 5000, verbose)
+        prepare_data_for_training(model_folder, verbose)
         
         if verbose:
             print('Training the digitization model...')
