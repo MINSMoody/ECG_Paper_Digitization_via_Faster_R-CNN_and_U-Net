@@ -35,3 +35,8 @@ TeamCode/src/work_dirs/
 TeamCode/tests/resources/photoscan/
 TeamCode/tests/resources/scanned_data/
 TeamCode/tests/resources/test_data_gen/
+trainset.pkl
+validset.pkl
+TeamCode/src/configs/epoch_3.pth
+TeamCode/src/configs/epoch_6.pth
+TeamCode/src/configs/epoch_9.pth
