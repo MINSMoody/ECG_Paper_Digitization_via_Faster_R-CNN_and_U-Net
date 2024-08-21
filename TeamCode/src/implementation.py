@@ -7,8 +7,8 @@ import helper_code as hc
 import numpy as np
 import os
 
-import pickle
-import heartpy as hp
+# import pickle
+# import heartpy as hp
 
 # from mmseg.registry import DATASETS
 
@@ -1051,10 +1051,10 @@ class OurDigitizationModel(AbstractDigitizationModel):
             print(f'Error in readout: {e}')
             return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
 
-        print('dumping pred')
-        to_dump = {'bboxes': sorted_bboxes, 'masks': to_be_readout, 'scores': scores, 'labels': labels, 'record': record, 'nrows': nrows, 'signal_est':signal}
-        with open('to_dump.pkl', 'wb') as f:
-            pickle.dump(to_dump, f)
+        # print('dumping pred')
+        # to_dump = {'bboxes': sorted_bboxes, 'masks': to_be_readout, 'scores': scores, 'labels': labels, 'record': record, 'nrows': nrows, 'signal_est':signal}
+        # with open('to_dump.pkl', 'wb') as f:
+        #     pickle.dump(to_dump, f)
 
         # print('dumping gt')
         # signal=readOut(header_path, gt_masks, gt_bboxes, mV_pixel)
