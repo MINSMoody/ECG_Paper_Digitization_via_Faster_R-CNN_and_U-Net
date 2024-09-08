@@ -617,13 +617,14 @@ def ecg_plot(
         line_width_probs = [0.2, 0.5, 0.3]
         solid_line_prob = 0.3
 
+        remove_all = np.random.random() < 0.1
         # Iterate over the gridlines
         for line in lines:
             # Set the line width based on precomputed probabilities
             chosen_width = np.random.choice(line_widths, p=line_width_probs)
             
             # Decide if the line should disappear
-            if np.random.random() < 0.15:
+            if np.random.random() < 0.3 or remove_all:
                 line.set_linewidth(0)  # Disappear the line
             else:
                 line.set_linewidth(chosen_width)
