@@ -255,21 +255,28 @@ def bboxes_sorting(bboxes, img_height):
             left = float('inf')
             right = float('-inf')
             # Only proceed if rowswith4cols is not empty
-            if rowswith4cols:
-                left_values = [np.min(row_dict[row][:, 0]) for row in rowswith4cols if len(row_dict[row]) > 0]
-                right_values = [np.max(row_dict[row][:, 2]) for row in rowswith4cols if len(row_dict[row]) > 0]
-                if left_values:
-                    left = min(left_values)
-                if right_values:
-                    right = max(right_values)
-            # Ensure that left and right have valid values
-            if left == float('inf') or right == float('-inf'):
-                print('Invalid left or right')
-                return None, None
-            leadwidth = (right - left) / 4 if right != left else 1  # Prevent division by zero
-            leftmid = left + leadwidth
-            mid = left + 2 * leadwidth
-            rightmid = left + 3 * leadwidth
+            # if rowswith4cols:
+            #     left_values = [np.min(row_dict[row][:, 0]) for row in rowswith4cols if len(row_dict[row]) > 0]
+            #     right_values = [np.max(row_dict[row][:, 2]) for row in rowswith4cols if len(row_dict[row]) > 0]
+            #     if left_values:
+            #         left = min(left_values)
+            #     if right_values:
+            #         right = max(right_values)
+            # # Ensure that left and right have valid values
+            # if left == float('inf') or right == float('-inf'):
+            #     print('Invalid left or right')
+            #     return None, None
+            # leadwidth = (right - left) / 4 if right != left else 1  # Prevent division by zero
+            # leftmid = left + leadwidth
+            # mid = left + 2 * leadwidth
+            # rightmid = left + 3 * leadwidth
+            leftmid = np.mean([np.sort(row_dict[row][:,0])[1] for row in rowswith4cols if len(row_dict[row]) > 0])
+            rightmid = np.mean([np.sort(row_dict[row][:,2])[-2] for row in rowswith4cols if len(row_dict[row]) > 0])
+            leadwidth = (rightmid - leftmid)/2
+            mid = leftmid + leadwidth
+            left = leftmid - leadwidth
+            right = rightmid + leadwidth
+            
             for key in [0, 1, 2]:
                 if row_dict_numcol[key] == 4:
                     row_dict[key] = row_dict[key][row_dict[key][:,5].argsort()]
@@ -315,21 +322,28 @@ def bboxes_sorting(bboxes, img_height):
             left = float('inf')
             right = float('-inf')
             # Only proceed if rowswith4cols is not empty
-            if rowswith4cols:
-                left_values = [np.min(row_dict[row][:, 0]) for row in rowswith4cols if len(row_dict[row]) > 0]
-                right_values = [np.max(row_dict[row][:, 2]) for row in rowswith4cols if len(row_dict[row]) > 0]
-                if left_values:
-                    left = min(left_values)
-                if right_values:
-                    right = max(right_values)
+            # if rowswith4cols:
+            #     left_values = [np.min(row_dict[row][:, 0]) for row in rowswith4cols if len(row_dict[row]) > 0]
+            #     right_values = [np.max(row_dict[row][:, 2]) for row in rowswith4cols if len(row_dict[row]) > 0]
+            #     if left_values:
+            #         left = min(left_values)
+            #     if right_values:
+            #         right = max(right_values)
             # Ensure that left and right have valid values
+            
+            # leadwidth = (right - left) / 4 if right != left else 1  # Prevent division by zero
+            # leftmid = left + leadwidth
+            # mid = left + 2 * leadwidth
+            # rightmid = left + 3 * leadwidth
+            leftmid = np.mean([np.sort(row_dict[row][:,0])[1] for row in rowswith4cols if len(row_dict[row]) > 0])
+            rightmid = np.mean([np.sort(row_dict[row][:,2])[-2] for row in rowswith4cols if len(row_dict[row]) > 0])
+            leadwidth = (rightmid - leftmid)/2
+            mid = leftmid + leadwidth
+            left = leftmid - leadwidth
+            right = rightmid + leadwidth
             if left == float('inf') or right == float('-inf'):
                 print('Invalid left or right')
                 return None, None
-            leadwidth = (right - left) / 4 if right != left else 1  # Prevent division by zero
-            leftmid = left + leadwidth
-            mid = left + 2 * leadwidth
-            rightmid = left + 3 * leadwidth
             for key in [0, 1, 2]:
                 if row_dict_numcol[key] == 4:
                     row_dict[key] = row_dict[key][row_dict[key][:, 5].argsort()]
@@ -399,7 +413,7 @@ def bboxes_sorting(bboxes, img_height):
 
 
 
-def crop_from_bbox(bbox, mask, mV_pixel):
+def crop_from_bbox(bbox, mask, zero_baselines, index):
     bbox = bbox.astype(int)
     ecg_segment = mask[bbox[1]:bbox[3]+1, bbox[0]:bbox[2]+1]
 
@@ -410,14 +424,23 @@ def crop_from_bbox(bbox, mask, mV_pixel):
 
     # Compute the weighting matrix
     weighting_matrix = np.linspace(
-        (bbox[3] - bbox[1]) * mV_pixel / 2,
-        -1 * (bbox[3] - bbox[1]) * mV_pixel / 2,
+        (bbox[3] - bbox[1]) / 2,
+        -1 * (bbox[3] - bbox[1]) / 2,
         num=ecg_segment.shape[0]
     ).reshape(-1, 1)
-    weighted_ecg_segment = ecg_segment * weighting_matrix
+    weighted_ecg_segment = ecg_segment * weighting_matrix 
+    # print(f"Zero baseline: {zero_baselines}, index: {index},bbox: {bbox}")
+    
+    
+    
+        
+    
+    
 
     # Calculate the numerator and denominator
-    denominator = np.sum(ecg_segment, axis=0)
+    denominator = np.sum(ecg_segment, axis=0) 
+    
+    
     numerator = np.sum(weighted_ecg_segment, axis=0)
 
     # Initialize signal with NaNs
@@ -431,8 +454,19 @@ def crop_from_bbox(bbox, mask, mV_pixel):
     # Warn if the signal is all NaN
     if np.isnan(signal).all():
         warnings.warn("Signal is all NaN", UserWarning)
+    
+    # # baseline correction
+    # if index in [0,3,6,9]:
+    #     signal = signal - (bbox[3] - zero_baselines[0])
+    # elif index in [4,7,10]:
+    #     signal = signal - (bbox[3] - zero_baselines[1])
+    # elif index in [2,5,8,11]:
+    #     signal = signal  - (bbox[3] - zero_baselines[2])
+    # elif index == 1:
+    #     signal = signal  - (bbox[3] - zero_baselines[3])
 
-    return signal
+
+    return signal - np.nanmedian(signal)
 
 
 
@@ -489,36 +523,37 @@ def detect_pan_tompkins(ecg_signal, sampling_rate):
 def readOut(num_samples, masks, nrows, bboxes, mV_pixel, sampling_frequency): # one more input: sampling_frequency
     num_signals = 12
     signals_np = np.full((num_signals, num_samples), np.nan)
-    def process_signal(index, bboxes, masks, mV_pixel, signallen,sampling_frequency, filter=True):
+    def process_signal(index, bboxes, masks, mV_pixel, signallen, sampling_frequency, zero_baselines, filter=True):
         if np.isnan(bboxes[index]).any():
             print(f'Warning: Bounding box is nan, returning zeros')
             return np.zeros(signallen)
-        signal = crop_from_bbox(bboxes[index], masks[index], mV_pixel)
+        signal = crop_from_bbox(bboxes[index], masks[index], zero_baselines, index)
+        signal *= mV_pixel
         # check the number of nan in signal
         if np.isnan(signal).sum() > 0.5*len(signal):
             print(f'Warning: More than 50% of signal is nan, returning zeros')
             return np.zeros(signallen)
         pan_tompkins = False
-        if np.isnan(signal).sum() < 0.1*len(signal):
-            print(f'Less than 10% of signal is nan, good quality and applying pan_tompkins')
-            pan_tompkins = True
-        signal = interpolate_nan(signal) - np.mean(signal)
-        try :
-            signal = apply_savgol_filter(signal)
-        except Exception as e:
-            print(f'Error in savgol filter: {e}')
-        if pan_tompkins:
-            try:
-                scaling_factor = 1.2
-                peaks = detect_pan_tompkins(signal, sampling_frequency)
-                print(f'Found {len(peaks)} peaks, rescaling signal')
-                signal[peaks] = signal[peaks] * scaling_factor
-            except Exception as e:
-                print(f'Error in pan tompkins: {e}')
-        try:
-            signal = wavelet_denoising(signal)
-        except Exception as e:
-            print(f'Error in wavelet denoising: {e}')
+        # if np.isnan(signal).sum() < 0.1*len(signal):
+        #     print(f'Less than 10% of signal is nan, good quality and applying pan_tompkins')
+        #     pan_tompkins = True
+        signal = interpolate_nan(signal)
+        # try :
+        #     signal = apply_savgol_filter(signal)
+        # except Exception as e:
+        #     print(f'Error in savgol filter: {e}')
+        # if pan_tompkins:
+        #     try:
+        #         scaling_factor = 1.2
+        #         peaks = detect_pan_tompkins(signal, sampling_frequency)
+        #         print(f'Found {len(peaks)} peaks, rescaling signal')
+        #         signal[peaks] = signal[peaks] * scaling_factor
+        #     except Exception as e:
+        #         print(f'Error in pan tompkins: {e}')
+        # try:
+        #     signal = wavelet_denoising(signal)
+        # except Exception as e:
+        #     print(f'Error in wavelet denoising: {e}')
         try:
             if len(signal) < signallen:
                 signal = upsample(signal, signallen)
@@ -528,23 +563,65 @@ def readOut(num_samples, masks, nrows, bboxes, mV_pixel, sampling_frequency): # 
             print(f'Error in upsampling/downsampling: {e}')
 
         # low pass filter added by Yani
-        try:
-            if filter:
-                if not np.isnan(signal).any():
-                    cutoff = sampling_frequency * 0.45  # normal ecg is 0.05Hz to around 150Hz
-                    order =6
-                    b, a = butter(order, cutoff, fs=sampling_frequency, btype='low', analog=False)
-                    signal = lfilter(b, a, signal)
-        except Exception as e:
-            print(f'Error in butter filter: {e}')
+        # try:
+        #     if filter:
+        #         if not np.isnan(signal).any():
+        #             cutoff = sampling_frequency * 0.5  # normal ecg is 0.05Hz to around 150Hz
+        #             order =6
+        #             b, a = butter(order, cutoff, fs=sampling_frequency, btype='low', analog=False)
+        #             signal = lfilter(b, a, signal)
+        # except Exception as e:
+        #     print(f'Error in butter filter: {e}')
         return signal
+    zero_baselines = [0, 0, 0, 0]
+    for i in [0,4,2,1]:
+        bbox = bboxes[i].astype(int)
+        ecg_segment = masks[i][bbox[1]:bbox[3]+1, bbox[0]:bbox[2]+1]
+
+        # Early return if the segment is entirely empty
+        if np.sum(ecg_segment) == 0:
+            warnings.warn("All empty in ECG segment, returning NaN array", UserWarning)
+            continue
+
+        # Compute the weighting matrix
+        weighting_matrix = np.linspace(
+            (bbox[3] - bbox[1]) / 2,
+            -1 * (bbox[3] - bbox[1]) / 2,
+            num=ecg_segment.shape[0]
+        ).reshape(-1, 1)
+        weighted_ecg_segment = ecg_segment * weighting_matrix 
+        
+        
+        
+
+        # Calculate the numerator and denominator
+        denominator = np.sum(ecg_segment, axis=0)
+        numerator = np.sum(weighted_ecg_segment, axis=0)
+
+        # Initialize signal with NaNs
+        signal = np.full(denominator.shape, np.nan)
+
+        # Use a small epsilon to avoid division by very small values or zero
+        epsilon = 1e-6
+        valid_idx = denominator > epsilon
+        signal[valid_idx] = numerator[valid_idx] / denominator[valid_idx]
+
+        # Warn if the signal is all NaN
+        if np.isnan(signal).all():
+            warnings.warn("Signal is all NaN", UserWarning)
+        if i == 4: zero_baselines[1] = bbox[3] - np.nanmedian(signal)
+        elif i in [0,2]: zero_baselines[i] = bbox[3] - np.nanmedian(signal)
+        else : zero_baselines[3] = bbox[3] - np.nanmedian(signal)
+    # print(f"Zero baselines: {zero_baselines}")
     if nrows == 4:
-        for i in range(num_signals):
+        for i in range(num_signals):                
             signallen = num_samples if i == 1 else num_samples // 4
             start_idx = (num_samples // 4) * (i // 3)
             end_idx = start_idx + signallen
+            
+            
             if i < len(bboxes):
-                signal = process_signal(i, bboxes, masks, mV_pixel, signallen, sampling_frequency, filter=True )
+                signal = process_signal(i, bboxes, masks, mV_pixel, signallen, sampling_frequency, zero_baselines, filter=True )
                 signals_np[i, start_idx:end_idx] = signal
             else:
                 signals_np[i, start_idx:end_idx] = np.zeros(signallen)
@@ -553,7 +630,7 @@ def readOut(num_samples, masks, nrows, bboxes, mV_pixel, sampling_frequency): # 
             signallen = num_samples // 4
             start_idx = (num_samples // 4) * (i // 3)
             end_idx = start_idx + signallen
-            signal = process_signal(i, bboxes, masks, mV_pixel, signallen, sampling_frequency, filter=True)
+            signal = process_signal(i, bboxes, masks, mV_pixel, signallen, sampling_frequency, zero_baselines, filter=True)
             signals_np[i, start_idx:end_idx] = signal
     signals_np = np.clip(signals_np, -2, 2)
     return signals_np.T if signals_np.shape[1] > signals_np.shape[0] else signals_np
@@ -1049,22 +1126,20 @@ class OurDigitizationModel(AbstractDigitizationModel):
         
         freq = hc.get_sampling_frequency(input_header)
         
+        # print(f"sorted bboxes: {sorted_bboxes}")
         try:
             signal=readOut(num_samples, to_be_readout, nrows, sorted_bboxes, mV_pixel, freq)
         except Exception as e:
             print(f'Error in readout: {e}')
             return empty_signals_np.T if empty_signals_np.shape[1] > empty_signals_np.shape[0] else empty_signals_np
 
+
+        # import pickle
         # print('dumping pred')
         # to_dump = {'bboxes': sorted_bboxes, 'masks': to_be_readout, 'scores': scores, 'labels': labels, 'record': record, 'nrows': nrows, 'signal_est':signal}
         # with open('to_dump.pkl', 'wb') as f:
         #     pickle.dump(to_dump, f)
 
-        # print('dumping gt')
-        # signal=readOut(header_path, gt_masks, gt_bboxes, mV_pixel)
-        # to_dump = {'bboxes': gt_bboxes, 'masks': gt_masks, 'scores': scores, 'labels': labels, 'record': record}
-        # with open('to_dump.pkl', 'wb') as f:
-        #     pickle.dump(to_dump, f)
         return signal
     
 

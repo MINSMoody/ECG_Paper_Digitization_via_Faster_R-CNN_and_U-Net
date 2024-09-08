@@ -220,9 +220,9 @@ def run_single_file(args):
                     blue_temp = np.random.choice([True,False], p=[0.25, 0.75])
 
                     if(blue_temp):
-                        temp = random.choice(range(4000,5000))
+                        temp = random.choice(range(6000,7000))
                     else:
-                        temp = random.choice(range(7000,9000))
+                        temp = random.choice(range(5000,5500))
                 else:
                     temp = None
                 rotate = args.rotate
