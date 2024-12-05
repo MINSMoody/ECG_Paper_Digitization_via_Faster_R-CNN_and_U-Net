@@ -1,3 +1,12 @@
+# Download pretrained weights
+
+Download the pretrained weights from the following link and unzip them in the `TeamCode/src/` folder.
+
+```bash
+wget -O TeamCode/src/configs_ckpts.zip https://web.clemenshutter.de/configs_ckpts.zip 
+unzip TeamCode/src/configs_ckpts.zip -d TeamCode/src/
+```
+
 # Installation
 
 (optional) create a conda environment  
